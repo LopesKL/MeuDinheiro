@@ -1,0 +1,5 @@
+# SQLite local (arquivo)
+Data/
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AutoMapper" Version="16.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Application.Dto\Application.Dto.csproj" />
+    <ProjectReference Include="..\..\3 - Domain\Project\Project.csproj" />
+    <ProjectReference Include="..\..\3 - Domain\Notifications\Notifications.csproj" />
+    <ProjectReference Include="..\..\4 - Infra\Repositories\Repositories.csproj" />
+  </ItemGroup>
+
+</Project>
