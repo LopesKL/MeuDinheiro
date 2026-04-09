@@ -48,7 +48,7 @@ try
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
 
-    builder.Services.AddFirebaseFinanceStore(builder.Configuration);
+    builder.Services.AddFirebaseFinanceStore(builder.Configuration, builder.Environment.ContentRootPath);
     builder.Services.AddSqlServerContext(builder.Configuration, builder.Environment.ContentRootPath);
 
     builder.Services.AddApplication(builder.Configuration);

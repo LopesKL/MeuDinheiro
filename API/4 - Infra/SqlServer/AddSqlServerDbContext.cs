@@ -84,7 +84,7 @@ public static class AddSqlServerDbContext
         if (string.IsNullOrWhiteSpace(jwtKey))
         {
             throw new InvalidOperationException(
-                "JWT Key not found. Please configure 'Authentication:JWTIssuerSigningKey' in appsettings.json or appsettings.Development.json");
+                "JWT Key not found. Please configure 'Authentication:JWTIssuerSigningKey' in appsettings.json or environment variables.");
         }
 
         var audience = configuration["Authentication:Audience"] ?? "ApiAudience";

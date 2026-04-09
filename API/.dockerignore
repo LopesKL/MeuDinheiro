@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+**/.vs/
+*.user
+*.suo
+
+# Não embutir chaves Firebase na imagem — no Cloud Run use Secret Manager / variáveis.
+**/*firebase-adminsdk*.json
+**/secrets/

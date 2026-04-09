@@ -11,7 +11,11 @@ public static class FirebaseServiceCollectionExtensions
     /// Registra <see cref="FirestoreDb"/> e <see cref="IFinanceStore"/>.
     /// A conexão com o Firestore só é criada na primeira utilização (evita 500.30 no IIS se a ordem de falha for só credencial).
     /// </summary>
-    public static IServiceCollection AddFirebaseFinanceStore(this IServiceCollection services, IConfiguration configuration)
+    /// <param name="contentRootPath">Raiz da aplicação (ex.: <c>IWebHostEnvironment.ContentRootPath</c>). Caminhos relativos em <c>Firebase:CredentialPath</c> são resolvidos a partir daqui.</param>
+    public static IServiceCollection AddFirebaseFinanceStore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        string? contentRootPath = null)
     {
         var projectId = configuration["Firebase:ProjectId"];
         if (string.IsNullOrWhiteSpace(projectId))
@@ -22,23 +26,24 @@ public static class FirebaseServiceCollectionExtensions
 
         var credPath = configuration["Firebase:CredentialPath"];
 
-        services.AddSingleton(_ => CreateFirestoreDb(projectId.Trim(), credPath));
+        services.AddSingleton(_ => CreateFirestoreDb(projectId.Trim(), credPath, contentRootPath));
         services.AddScoped<IFinanceStore, FirestoreFinanceStore>();
         return services;
     }
 
-    private static FirestoreDb CreateFirestoreDb(string projectId, string? credentialPathFromConfig)
+    private static FirestoreDb CreateFirestoreDb(string projectId, string? credentialPathFromConfig, string? contentRootPath)
     {
-        ApplyCredentialPathFromConfig(credentialPathFromConfig);
+        ApplyCredentialPathFromConfig(credentialPathFromConfig, contentRootPath);
 
         var envPath = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS");
         var credentialOk = !string.IsNullOrWhiteSpace(envPath) && File.Exists(envPath);
         if (!credentialOk)
         {
             throw new InvalidOperationException(
-                "Firebase: credenciais não encontradas. No servidor/IIS/Azure: (1) coloque o JSON da conta de serviço em uma pasta acessível e defina " +
-                "Firebase:CredentialPath com caminho absoluto, ou (2) defina a variável de ambiente GOOGLE_APPLICATION_CREDENTIALS com o caminho completo do JSON. " +
-                "No Azure App Service use Application settings → New application setting (nome GOOGLE_APPLICATION_CREDENTIALS ou carregue o ficheiro e use um caminho sob D:\\home\\).");
+                "Firebase / Firestore: credenciais não encontradas. Coloque o JSON da conta de serviço (mesmo ficheiro que no Node com admin.credential.cert) e: " +
+                "(1) defina Firebase:CredentialPath com caminho absoluto ou relativo à pasta do projeto WebAPI (ex.: secrets/service-account.json), ou " +
+                "(2) defina a variável de ambiente GOOGLE_APPLICATION_CREDENTIALS com o caminho completo do JSON. " +
+                "O SDK usado aqui é Google.Cloud.Firestore (equivalente funcional ao acesso ao Firestore; não é obrigatório o pacote FirebaseAdmin salvo se precisar de Firebase Auth no servidor).");
         }
 
         try
@@ -53,13 +58,27 @@ public static class FirebaseServiceCollectionExtensions
         }
     }
 
-    private static void ApplyCredentialPathFromConfig(string? credentialPathFromConfig)
+    private static void ApplyCredentialPathFromConfig(string? credentialPathFromConfig, string? contentRootPath)
     {
         if (string.IsNullOrWhiteSpace(credentialPathFromConfig))
             return;
 
-        var full = Path.GetFullPath(credentialPathFromConfig);
-        if (File.Exists(full))
-            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", full);
+        var resolved = ResolveCredentialPath(credentialPathFromConfig.Trim(), contentRootPath);
+        if (!File.Exists(resolved))
+        {
+            throw new InvalidOperationException(
+                $"Firebase:CredentialPath aponta para um ficheiro que não existe: {resolved}");
+        }
+
+        Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", resolved);
+    }
+
+    private static string ResolveCredentialPath(string path, string? contentRootPath)
+    {
+        if (Path.IsPathRooted(path))
+            return Path.GetFullPath(path);
+        if (!string.IsNullOrWhiteSpace(contentRootPath))
+            return Path.GetFullPath(Path.Combine(contentRootPath, path));
+        return Path.GetFullPath(path);
     }
 }

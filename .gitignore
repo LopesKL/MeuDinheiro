@@ -32,3 +32,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Chaves de conta de serviço Firebase / Google (nunca versionar)
+**/*firebase-adminsdk*.json
