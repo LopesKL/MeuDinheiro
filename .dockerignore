@@ -1,0 +1,15 @@
+.git
+.github
+**/.vs
+**/bin
+**/obj
+**/node_modules
+React/node_modules
+React/dist
+.env
+.env.*
+**/.env
+**/.env.*
+*.user
+**/*firebase-adminsdk*.json
+API/**/secrets/
