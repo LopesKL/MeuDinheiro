@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Linq;
 using Microsoft.Extensions.Configuration;
+using Npgsql;
 
 namespace WebAPI;
 
@@ -47,18 +48,66 @@ internal static class DatabaseUrlConfigurationLoader
     }
 
     /// <summary>
-    /// Garante <c>sslmode=require</c> em URIs <c>postgres(ql)://</c> quando o host o exige (ex.: Render externo).
+    /// URIs <c>postgres(ql)://</c> são convertidas para formato Npgsql por palavras-chave (sem <c>?sslmode=</c> na URL).
+    /// Evita falhas quando plataformas truncam o valor em <c>=</c> (ex.: <c>...?sslmode</c> sem <c>=require</c>).
     /// </summary>
     internal static string NormalizePostgresUri(string url)
     {
-        if (!url.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
-            && !url.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
-            return url;
+        var trimmed = url.Trim();
+        if (!IsPostgresUri(trimmed))
+            return trimmed;
 
-        if (url.Contains("sslmode=", StringComparison.OrdinalIgnoreCase))
-            return url;
+        return ConvertPostgresUriToNpgsqlKeywordString(trimmed);
+    }
 
-        return url.Contains('?', StringComparison.Ordinal) ? $"{url}&sslmode=require" : $"{url}?sslmode=require";
+    private static string ConvertPostgresUriToNpgsqlKeywordString(string url)
+    {
+        // Ambientes que partem o valor no primeiro '=' deixam só "?sslmode" — remove para Uri válido.
+        if (url.EndsWith("?sslmode", StringComparison.OrdinalIgnoreCase))
+            url = url[..^"?sslmode".Length];
+
+        var uri = new Uri(url);
+        var userInfo = uri.UserInfo;
+        string user;
+        string password;
+        var idx = userInfo.IndexOf(':');
+        if (idx < 0)
+        {
+            user = Uri.UnescapeDataString(userInfo);
+            password = string.Empty;
+        }
+        else
+        {
+            user = Uri.UnescapeDataString(userInfo[..idx]);
+            password = Uri.UnescapeDataString(userInfo[(idx + 1)..]);
+        }
+
+        var database = uri.AbsolutePath.TrimStart('/');
+        if (string.IsNullOrEmpty(database))
+            database = "postgres";
+
+        var port = uri.Port > 0 ? uri.Port : 5432;
+
+        var sslMode = SslMode.Require;
+        var q = uri.Query;
+        if (q.Contains("sslmode=disable", StringComparison.OrdinalIgnoreCase))
+            sslMode = SslMode.Disable;
+        else if (q.Contains("sslmode=prefer", StringComparison.OrdinalIgnoreCase))
+            sslMode = SslMode.Prefer;
+        else if (q.Contains("sslmode=allow", StringComparison.OrdinalIgnoreCase))
+            sslMode = SslMode.Allow;
+
+        var csb = new NpgsqlConnectionStringBuilder
+        {
+            Host = uri.Host,
+            Port = port,
+            Username = user,
+            Password = password,
+            Database = database,
+            SslMode = sslMode,
+        };
+
+        return csb.ConnectionString;
     }
 
     /// <summary>

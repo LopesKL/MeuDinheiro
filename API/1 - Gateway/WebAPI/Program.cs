@@ -9,6 +9,7 @@ using SqlServer.Context;
 using WebAPI.Workers;
 using WebAPI;
 using Repositories;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -119,6 +120,11 @@ try
             errorApp.Run(async context =>
             {
                 AppendWildcardCorsHeaders(context.Response.Headers);
+
+                var ex = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+                if (ex != null)
+                    Log.Error(ex, "Exceção não tratada na API (ver stack trace abaixo)");
+
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
                 context.Response.ContentType = "application/json; charset=utf-8";
                 await context.Response.WriteAsJsonAsync(new
