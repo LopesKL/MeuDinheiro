@@ -114,6 +114,9 @@ try
         routes = "Todas sob /api/... (ex.: POST /api/SignIn/signin). Swagger apenas em Development."
     }));
 
+    // O browser pede /favicon.ico automaticamente; sem ficheiro em wwwroot → 404 na consola.
+    app.MapMethods("/favicon.ico", new[] { "GET", "HEAD" }, () => Results.NoContent());
+
     app.Run();
 }
 catch (Exception ex)
