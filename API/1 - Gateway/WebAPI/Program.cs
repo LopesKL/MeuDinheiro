@@ -12,6 +12,9 @@ using Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: false);
+PostgresConnectionFileLoader.Apply(builder);
+
+Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "logs"));
 
 // Serilog: apenas console (stdout no Render). Sem sinks configuráveis por JSON para evitar MSSqlServer/outros.
 var loggerConfig = new LoggerConfiguration()
@@ -28,6 +31,8 @@ builder.Host.UseSerilog();
 
 try
 {
+    PostgreSqlConfigurationGuard.Validate(builder.Configuration);
+
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
@@ -72,7 +77,7 @@ try
         if (await db.Database.CanConnectAsync())
         {
             var provider = db.Database.ProviderName ?? string.Empty;
-            if (db.Database.IsInMemory() || provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+            if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
                 await db.Database.EnsureCreatedAsync();
             else if (provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
                 await db.Database.MigrateAsync();
@@ -121,6 +126,19 @@ try
 }
 catch (Exception ex)
 {
+    try
+    {
+        var logsDir = Path.Combine(builder.Environment.ContentRootPath, "logs");
+        Directory.CreateDirectory(logsDir);
+        File.WriteAllText(
+            Path.Combine(logsDir, "startup-failure.txt"),
+            $"{DateTime.UtcNow:O} UTC\n{ex}");
+    }
+    catch
+    {
+        // ignorar falha ao escrever diagnóstico
+    }
+
     Log.Fatal(ex, "Application terminated unexpectedly");
     return 1;
 }

@@ -4,6 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>f8c3b2a1-9e7d-4c6b-8a5f-1e2d3c4b5a6f</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,9 +14,16 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.2" />
+  </ItemGroup>
+
+  <Target Name="EnsureLogsFolderOnPublish" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)logs" />
+  </Target>
+
+  <ItemGroup>
+    <None Update="postgres-connection.example.txt" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

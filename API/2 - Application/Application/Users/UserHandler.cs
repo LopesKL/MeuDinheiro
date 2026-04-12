@@ -44,13 +44,19 @@ public class UserHandler
 
     public async Task<UserSignInResponseDto?> SignInAsync(UserSignInDto dto)
     {
-        if (string.IsNullOrWhiteSpace(dto.Username) || string.IsNullOrWhiteSpace(dto.Password))
+        _notification.Clear();
+
+        var login = dto.Username?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(dto.Password))
         {
             _notification.DefaultBuilder("SignIn_01", "Username e senha são obrigatórios");
             return null;
         }
 
-        var user = await _userManager.FindByNameAsync(dto.Username);
+        var user = await _userManager.FindByNameAsync(login);
+        if (user == null && login.Contains('@', StringComparison.Ordinal))
+            user = await _userManager.FindByEmailAsync(login);
+
         if (user == null || !user.Active)
         {
             _notification.DefaultBuilder("SignIn_02", "Usuário não encontrado ou inativo");
@@ -67,8 +73,9 @@ public class UserHandler
         var roles = await _userManager.GetRolesAsync(user);
         if (!roles.Any())
         {
-            _notification.DefaultBuilder("SignIn_04", "Usuário não possui roles atribuídas");
-            return null;
+            await EnsureRoleUserExistsAsync();
+            await _userManager.AddToRoleAsync(user, Roles.ROLE_USER);
+            roles = await _userManager.GetRolesAsync(user);
         }
 
         var token = SetToken(user, roles);
@@ -133,11 +140,7 @@ public class UserHandler
             return null;
         }
 
-        if (!await _roleManager.RoleExistsAsync(Roles.ROLE_USER))
-        {
-            await _roleManager.CreateAsync(new AppRole { Name = Roles.ROLE_USER, NormalizedName = "ROLEUSER" });
-        }
-
+        await EnsureRoleUserExistsAsync();
         await _userManager.AddToRoleAsync(user, Roles.ROLE_USER);
         await SeedDefaultFinanceDataAsync(user.Id);
 
@@ -209,7 +212,16 @@ public class UserHandler
             return null;
         }
 
+        await EnsureRoleUserExistsAsync();
+        await _userManager.AddToRoleAsync(user, Roles.ROLE_USER);
+
         return _mapper.Map<UserDto>(user);
+    }
+
+    private async Task EnsureRoleUserExistsAsync()
+    {
+        if (!await _roleManager.RoleExistsAsync(Roles.ROLE_USER))
+            await _roleManager.CreateAsync(new AppRole { Name = Roles.ROLE_USER, NormalizedName = "ROLEUSER" });
     }
 
     private string SetToken(AppUser user, IList<string> roles)

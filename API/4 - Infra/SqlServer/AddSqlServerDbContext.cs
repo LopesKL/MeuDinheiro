@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Project.Entities;
 using SqlServer.Context;
@@ -15,16 +14,16 @@ namespace SqlServer;
 public static class AddSqlServerDbContext
 {
     /// <summary>
-    /// Registra o DbContext. Ordem: InMemory → SQLite (arquivo) → PostgreSQL (connection string válida) → fallback InMemory.
-    /// Dados financeiros usam <c>IFinanceStore</c> (memória no processo; <c>AddMemoryFinanceStore</c> no arranque).
+    /// <c>Database:UsePublishedDatabase</c> true → PostgreSQL obrigatório (sem InMemory).
+    /// false → apenas SQLite em ficheiro se <c>Database:UseSqlite</c> true (dev opcional).
     /// </summary>
     public static IServiceCollection AddSqlServerContext(
         this IServiceCollection services,
         IConfiguration configuration,
         string contentRootPath)
     {
+        var usePublishedDatabase = configuration.GetValue<bool>("Database:UsePublishedDatabase", true);
         var connectionString = configuration.GetConnectionString("PostgreSQL");
-        var useInMemory = configuration.GetValue<bool>("Database:UseInMemory", false);
         var useSqlite = configuration.GetValue<bool>("Database:UseSqlite", false);
         var sqliteRelativePath = configuration["Database:SqliteDatabasePath"] ?? "Data/finance.db";
 
@@ -32,10 +31,18 @@ public static class AddSqlServerDbContext
             && !connectionString.Contains("your_user", StringComparison.OrdinalIgnoreCase)
             && !connectionString.Contains("your_password", StringComparison.OrdinalIgnoreCase);
 
-        if (useInMemory)
+        if (usePublishedDatabase)
         {
+            if (!connectionStringValid)
+            {
+                throw new InvalidOperationException(
+                    "Database:UsePublishedDatabase=true exige ConnectionStrings:PostgreSQL válida " +
+                    "(user-secrets, appsettings.Secrets.json ou variável ConnectionStrings__PostgreSQL). " +
+                    "Não há fallback InMemory.");
+            }
+
             services.AddDbContext<ApiServerContext>(options =>
-                options.UseInMemoryDatabase("FrameworkDB")
+                options.UseNpgsql(connectionString, b => b.MigrationsAssembly("WebAPI"))
                     .EnableSensitiveDataLogging());
         }
         else if (useSqlite)
@@ -52,17 +59,11 @@ public static class AddSqlServerDbContext
                 options.UseSqlite(sqliteConnection)
                     .EnableSensitiveDataLogging());
         }
-        else if (connectionStringValid)
-        {
-            services.AddDbContext<ApiServerContext>(options =>
-                options.UseNpgsql(connectionString, b => b.MigrationsAssembly("WebAPI"))
-                    .EnableSensitiveDataLogging());
-        }
         else
         {
-            services.AddDbContext<ApiServerContext>(options =>
-                options.UseInMemoryDatabase("FrameworkDB")
-                    .EnableSensitiveDataLogging());
+            throw new InvalidOperationException(
+                "Defina Database:UsePublishedDatabase=true com PostgreSQL ou UsePublishedDatabase=false com Database:UseSqlite=true. " +
+                "Base InMemory não é utilizada.");
         }
 
         services.AddScoped<SqlServer.Interfaces.IDbContext>(provider =>
@@ -110,7 +111,8 @@ public static class AddSqlServerDbContext
                 };
             });
 
-        var usePersistentStore = !useInMemory && (useSqlite || connectionStringValid);
+        var usePersistentStore = usePublishedDatabase && connectionStringValid
+            || !usePublishedDatabase && useSqlite;
         if (usePersistentStore)
             services.AddHostedService<TimedHostedService>();
 

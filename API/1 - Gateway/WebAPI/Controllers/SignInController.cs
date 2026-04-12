@@ -13,8 +13,8 @@ public class SignInController : BaseController
 {
     private readonly UserHandler _handler;
 
-    public SignInController(UserHandler handler, INotificationHandler notification, UserHandler userHandler)
-        : base(notification, userHandler)
+    public SignInController(UserHandler handler, INotificationHandler notification)
+        : base(notification, handler)
     {
         _handler = handler;
     }

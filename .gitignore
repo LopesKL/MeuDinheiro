@@ -30,6 +30,7 @@ Thumbs.db
 
 # Connection strings locais (não versionar)
 **/appsettings.Secrets.json
+**/postgres-connection.txt
 
 # Env (não versionar segredos)
 .env

@@ -1,10 +1,8 @@
 using Application.Finance;
-using Microsoft.EntityFrameworkCore;
-using SqlServer.Context;
 
 namespace WebAPI.Workers;
 
-/// <summary>Executa geração de gastos recorrentes periodicamente (não roda com banco in-memory).</summary>
+/// <summary>Executa geração de gastos recorrentes periodicamente.</summary>
 public class RecurringExpenseWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -24,13 +22,6 @@ public class RecurringExpenseWorker : BackgroundService
             try
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                var db = scope.ServiceProvider.GetService<ApiServerContext>();
-                if (db != null && db.Database.IsInMemory())
-                {
-                    await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
-                    continue;
-                }
-
                 var svc = scope.ServiceProvider.GetRequiredService<RecurringExpenseService>();
                 var n = await svc.GenerateDueForTodayAsync(stoppingToken);
                 if (n > 0)
