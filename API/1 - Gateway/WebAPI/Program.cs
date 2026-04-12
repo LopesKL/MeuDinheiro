@@ -14,6 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: false);
 DatabaseUrlConfigurationLoader.Apply(builder);
 PostgresConnectionFileLoader.Apply(builder);
+DatabaseUrlConfigurationLoader.ApplySanitizationToExistingConnectionString(builder);
 
 Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "logs"));
 
@@ -34,13 +35,16 @@ try
 {
     if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("PostgreSQL")))
     {
-        var hasDbUrl = !string.IsNullOrWhiteSpace(
-            Environment.GetEnvironmentVariable("DATABASE_URL")
-            ?? Environment.GetEnvironmentVariable("POSTGRES_URL"));
+        var probe = DatabaseUrlConfigurationLoader.ProbeProcessEnvironment();
         Log.Warning(
-            "PostgreSQL ainda sem ConnectionStrings:PostgreSQL. O processo vê DATABASE_URL/POSTGRES_URL: {HasDatabaseUrl}. " +
-            "No Render: Web Service (Docker) → Environment → KEY exatamente DATABASE_URL, valor = Internal Database URL.",
-            hasDbUrl);
+            "PostgreSQL: ConnectionStrings:PostgreSQL continua vazio após carregar config. " +
+            "Ambiente (sem valores): URL-like vars={UrlLike}, ConnectionStrings__PostgreSQL={ConnStrEnv}, PGHOST+PGDATABASE={PgLib}. " +
+            "Primeira chave URL-like encontrada: {FirstUrlKey}. " +
+            "Render: no Web Service (Docker) → Environment → DATABASE_URL = Internal Database URL do Postgres, ou ConnectionStrings__PostgreSQL (Npgsql).",
+            probe.HasDatabaseUrlLikeEnv,
+            probe.HasConnectionStringsPostgreSQLEnv,
+            probe.HasPgLibEnv,
+            probe.FirstUrlEnvKey ?? "(nenhuma)");
     }
 
     PostgreSqlConfigurationGuard.Validate(builder.Configuration);

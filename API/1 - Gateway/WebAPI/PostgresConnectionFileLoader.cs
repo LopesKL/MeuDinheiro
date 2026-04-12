@@ -47,6 +47,8 @@ internal static class PostgresConnectionFileLoader
         if (string.IsNullOrEmpty(line))
             return;
 
+        line = DatabaseUrlConfigurationLoader.TrimConfigurationValue(line) ?? line;
+
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:PostgreSQL"] = line

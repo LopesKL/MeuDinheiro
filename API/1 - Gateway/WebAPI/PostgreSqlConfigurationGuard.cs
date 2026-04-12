@@ -10,7 +10,7 @@ internal static class PostgreSqlConfigurationGuard
         if (!usePublishedDatabase)
             return;
 
-        var cs = configuration.GetConnectionString("PostgreSQL");
+        var cs = DatabaseUrlConfigurationLoader.TrimConfigurationValue(configuration.GetConnectionString("PostgreSQL"));
         if (string.IsNullOrWhiteSpace(cs))
         {
             throw new InvalidOperationException(
