@@ -106,6 +106,14 @@ try
 
     app.MapControllers();
 
+    // Render/browser na raiz: sem isto, GET / devolve 404 (só existem rotas /api/...).
+    app.MapGet("/", () => Results.Json(new
+    {
+        ok = true,
+        service = "MeuDinheiro API",
+        routes = "Todas sob /api/... (ex.: POST /api/SignIn/signin). Swagger apenas em Development."
+    }));
+
     app.Run();
 }
 catch (Exception ex)
