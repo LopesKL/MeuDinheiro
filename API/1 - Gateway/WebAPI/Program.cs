@@ -32,6 +32,17 @@ builder.Host.UseSerilog();
 
 try
 {
+    if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("PostgreSQL")))
+    {
+        var hasDbUrl = !string.IsNullOrWhiteSpace(
+            Environment.GetEnvironmentVariable("DATABASE_URL")
+            ?? Environment.GetEnvironmentVariable("POSTGRES_URL"));
+        Log.Warning(
+            "PostgreSQL ainda sem ConnectionStrings:PostgreSQL. O processo vê DATABASE_URL/POSTGRES_URL: {HasDatabaseUrl}. " +
+            "No Render: Web Service (Docker) → Environment → KEY exatamente DATABASE_URL, valor = Internal Database URL.",
+            hasDbUrl);
+    }
+
     PostgreSqlConfigurationGuard.Validate(builder.Configuration);
 
     builder.Services.AddControllers();

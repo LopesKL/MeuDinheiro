@@ -5,6 +5,7 @@ namespace WebAPI;
 
 /// <summary>
 /// Preenche ConnectionStrings:PostgreSQL a partir de variáveis típicas de PaaS (Render, etc.).
+/// Lê primeiro o ambiente do processo (Environment) e só depois IConfiguration — evita falhas de ordem/cadeia.
 /// </summary>
 internal static class DatabaseUrlConfigurationLoader
 {
@@ -25,17 +26,36 @@ internal static class DatabaseUrlConfigurationLoader
 
     private static string? ResolvePostgresConnectionString(IConfiguration configuration)
     {
+        // 1) Processo (Render injeta aqui no arranque do container)
         var uri =
             FirstNonEmpty(
-                configuration["DATABASE_URL"],
-                configuration["POSTGRES_URL"],
-                GetEnvironmentVariableCaseInsensitive("DATABASE_URL"),
-                GetEnvironmentVariableCaseInsensitive("POSTGRES_URL"));
+                TrimUriEnv(GetEnvironmentVariableCaseInsensitive("DATABASE_URL")),
+                TrimUriEnv(GetEnvironmentVariableCaseInsensitive("POSTGRES_URL")),
+                TrimUriEnv(GetEnvironmentVariableCaseInsensitive("DATABASE_URI")));
+
+        // 2) IConfiguration (ficheiros + env já carregados pelo host)
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            uri = FirstNonEmpty(
+                TrimUriEnv(configuration["DATABASE_URL"]),
+                TrimUriEnv(configuration["POSTGRES_URL"]));
+        }
 
         if (!string.IsNullOrWhiteSpace(uri))
             return NormalizePostgresUri(uri.Trim());
 
         return BuildFromLibpqEnv();
+    }
+
+    /// <summary>Remove aspas que por vezes ficam ao copiar/colar no painel do Render.</summary>
+    private static string? TrimUriEnv(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return value;
+        var s = value.Trim();
+        if (s.Length >= 2 && ((s[0] == '"' && s[^1] == '"') || (s[0] == '\'' && s[^1] == '\'')))
+            s = s[1..^1].Trim();
+        return s;
     }
 
     private static string? GetEnvironmentVariableCaseInsensitive(string name)
@@ -81,7 +101,7 @@ internal static class DatabaseUrlConfigurationLoader
             $"Host={host};Port={port};Username={user};Password={password};Database={database};SSL Mode=Require;Trust Server Certificate=true";
     }
 
-    private static string NormalizePostgresUri(string url)
+    internal static string NormalizePostgresUri(string url)
     {
         if (!url.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
             && !url.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
