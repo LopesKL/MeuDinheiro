@@ -9,6 +9,7 @@ using SqlServer.Context;
 using WebAPI.Workers;
 using WebAPI;
 using Repositories;
+using Microsoft.AspNetCore.Http;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: false);
@@ -104,6 +105,32 @@ try
         Log.Warning(ex, "Não foi possível aplicar migração ou criar o banco automaticamente.");
     }
 
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseDeveloperExceptionPage();
+        app.UseSwagger();
+        app.UseSwaggerUI();
+    }
+    else
+    {
+        // Sem isto, 500 em produção muitas vezes não inclui cabeçalhos CORS e o browser acusa "CORS" em vez do erro real.
+        app.UseExceptionHandler(errorApp =>
+        {
+            errorApp.Run(async context =>
+            {
+                AppendWildcardCorsHeaders(context.Response.Headers);
+                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    success = false,
+                    message = "Erro interno no servidor.",
+                    detail = "Consulte os logs do serviço (ex.: Render → Logs).",
+                });
+            });
+        });
+    }
+
     app.UseStaticFiles();
 
     app.Use(async (context, next) =>
@@ -112,16 +139,9 @@ try
         await next();
     });
 
-    if (app.Environment.IsDevelopment())
-    {
-        app.UseDeveloperExceptionPage();
-        app.UseSwagger();
-        app.UseSwaggerUI();
-    }
-
-    app.UseResponseCompression();
     app.UseRouting();
     app.UseCors();
+    app.UseResponseCompression();
     app.UseAuthentication();
     app.UseAuthorization();
 
@@ -164,3 +184,13 @@ finally
 }
 
 return 0;
+
+static void AppendWildcardCorsHeaders(IHeaderDictionary headers)
+{
+    if (!headers.ContainsKey("Access-Control-Allow-Origin"))
+        headers.Append("Access-Control-Allow-Origin", "*");
+    if (!headers.ContainsKey("Access-Control-Allow-Headers"))
+        headers.Append("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, X-Requested-With");
+    if (!headers.ContainsKey("Access-Control-Allow-Methods"))
+        headers.Append("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+}
