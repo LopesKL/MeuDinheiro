@@ -91,11 +91,24 @@ public class UserHandler
 
     public async Task<UserDto?> GetUserByLoginAsync(string login)
     {
-        var user = await _userManager.FindByNameAsync(login);
-        if (user == null)
+        var key = login?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(key))
             return null;
 
-        return _mapper.Map<UserDto>(user);
+        var user = await _userManager.FindByNameAsync(key);
+        if (user == null && key.Contains('@', StringComparison.Ordinal))
+            user = await _userManager.FindByEmailAsync(key);
+
+        return user == null ? null : _mapper.Map<UserDto>(user);
+    }
+
+    /// <summary>Temporário: listagem para diagnóstico. Remover antes de produção pública.</summary>
+    public IReadOnlyList<UserDto> GetAllUsers()
+    {
+        var users = _userManager.Users
+            .OrderBy(u => u.UserName ?? string.Empty)
+            .ToList();
+        return _mapper.Map<List<UserDto>>(users);
     }
 
     public async Task<UserDto?> GetUserByIdAsync(string id)

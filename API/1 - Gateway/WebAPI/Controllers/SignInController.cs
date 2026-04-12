@@ -8,7 +8,6 @@ using WebAPI.Controllers.Base;
 
 namespace WebAPI.Controllers;
 
-[Authorize]
 public class SignInController : BaseController
 {
     private readonly UserHandler _handler;

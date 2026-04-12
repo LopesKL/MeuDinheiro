@@ -15,7 +15,8 @@ internal static class PostgreSqlConfigurationGuard
         {
             throw new InvalidOperationException(
                 "Database:UsePublishedDatabase=true mas ConnectionStrings:PostgreSQL está vazio. " +
-                "IIS: (1) Variável ConnectionStrings__PostgreSQL no site, ou (2) ficheiro postgres-connection.txt na pasta da app (uma linha Npgsql), ou (3) appsettings.Secrets.json. " +
+                "Render: ligue o addon PostgreSQL ao Web Service (injeta DATABASE_URL) ou defina ConnectionStrings__PostgreSQL. " +
+                "Outros: variável ConnectionStrings__PostgreSQL, ficheiro postgres-connection.txt, ou appsettings.Secrets.json. " +
                 "Modelo: postgres-connection.example.txt");
         }
 

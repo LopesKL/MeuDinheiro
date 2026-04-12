@@ -12,6 +12,7 @@ using Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: false);
+DatabaseUrlConfigurationLoader.Apply(builder);
 PostgresConnectionFileLoader.Apply(builder);
 
 Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "logs"));
