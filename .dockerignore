@@ -13,3 +13,4 @@ React/dist
 *.user
 **/*firebase-adminsdk*.json
 API/**/secrets/
+**/appsettings.Secrets.json

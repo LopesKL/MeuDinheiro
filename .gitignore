@@ -28,6 +28,9 @@ yarn-error.log*
 .idea/
 Thumbs.db
 
+# Connection strings locais (não versionar)
+**/appsettings.Secrets.json
+
 # Env (não versionar segredos)
 .env
 .env.local

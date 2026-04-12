@@ -1,42 +1,26 @@
 using Application;
-using Firebase;
 using Notifications.Notifications;
 using Repositories.Interfaces;
 using Repositories.Repositories;
 using Serilog;
-using Serilog.Sinks.MSSqlServer;
 using Microsoft.EntityFrameworkCore;
 using SqlServer;
 using SqlServer.Context;
 using WebAPI.Workers;
 using WebAPI;
+using Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: false);
 
-// Serilog Configuration
-var serilogConnectionString = builder.Configuration.GetConnectionString("SqlServer");
-var useInMemory = builder.Configuration.GetValue<bool>("Database:UseInMemory", false);
-var useSqlite = builder.Configuration.GetValue<bool>("Database:UseSqlite", false);
-var connectionStringValid = !string.IsNullOrWhiteSpace(serilogConnectionString)
-    && !serilogConnectionString.Contains("your_user", StringComparison.OrdinalIgnoreCase)
-    && !serilogConnectionString.Contains("your_password", StringComparison.OrdinalIgnoreCase);
-
+// Serilog: apenas console (stdout no Render). Sem sinks configuráveis por JSON para evitar MSSqlServer/outros.
 var loggerConfig = new LoggerConfiguration()
-    .ReadFrom.Configuration(builder.Configuration)
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", Serilog.Events.LogEventLevel.Information)
     .Enrich.FromLogContext()
     .WriteTo.Console();
-
-if (!useInMemory && !useSqlite && connectionStringValid)
-{
-    loggerConfig.WriteTo.MSSqlServer(
-        connectionString: serilogConnectionString!,
-        sinkOptions: new Serilog.Sinks.MSSqlServer.MSSqlServerSinkOptions
-        {
-            TableName = "LogAPI",
-            AutoCreateSqlTable = true
-        },
-        restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Error);
-}
 
 Log.Logger = loggerConfig.CreateLogger();
 
@@ -48,7 +32,7 @@ try
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
 
-    builder.Services.AddFirebaseFinanceStore(builder.Configuration, builder.Environment.ContentRootPath);
+    builder.Services.AddMemoryFinanceStore();
     builder.Services.AddSqlServerContext(builder.Configuration, builder.Environment.ContentRootPath);
 
     builder.Services.AddApplication(builder.Configuration);
@@ -90,7 +74,7 @@ try
             var provider = db.Database.ProviderName ?? string.Empty;
             if (db.Database.IsInMemory() || provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
                 await db.Database.EnsureCreatedAsync();
-            else if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+            else if (provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
                 await db.Database.MigrateAsync();
         }
     }

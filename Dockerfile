@@ -2,6 +2,8 @@
 #   docker build -t webapi:latest .
 #
 # Se preferires só a pasta API: docker build -f API/Dockerfile -t webapi:latest API
+#
+# Render: ConnectionStrings__PostgreSQL = URL interna do PostgreSQL (Npgsql).
 
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src

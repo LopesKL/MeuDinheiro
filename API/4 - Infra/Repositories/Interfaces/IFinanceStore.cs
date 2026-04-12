@@ -2,7 +2,7 @@ using Project.Entities.Finance;
 
 namespace Repositories.Interfaces;
 
-/// <summary>Persistência de dados financeiros no Cloud Firestore (Firebase).</summary>
+/// <summary>Persistência de dados financeiros (implementação atual: memória no processo).</summary>
 public interface IFinanceStore
 {
     Task<IReadOnlyList<Category>> ListCategoriesAsync(string userId, CancellationToken ct = default);

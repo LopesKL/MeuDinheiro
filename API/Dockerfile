@@ -1,6 +1,9 @@
-# Imagem da WebAPI (Firestore + Identity). Contexto = pasta API apenas.
+# Imagem da WebAPI (Identity + API). Contexto = pasta API apenas.
 #   docker build -f API/Dockerfile -t webapi:latest API
 # Deploy Cloud Run a partir da raiz do Git: use o Dockerfile na raiz do repo (./Dockerfile).
+#
+# Render (PostgreSQL gerido): defina a variável de ambiente ConnectionStrings__PostgreSQL
+# com a Internal Database URL (ou connection string Npgsql equivalente; use SSL em produção).
 
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src

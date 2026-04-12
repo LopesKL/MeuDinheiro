@@ -15,7 +15,7 @@
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.0" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.2" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,7 +23,6 @@
     <ProjectReference Include="..\..\2 - Application\Application.Dto\Application.Dto.csproj" />
     <ProjectReference Include="..\..\3 - Domain\Project\Project.csproj" />
     <ProjectReference Include="..\..\3 - Domain\Notifications\Notifications.csproj" />
-    <ProjectReference Include="..\..\4 - Infra\Firebase\Firebase.csproj" />
     <ProjectReference Include="..\..\4 - Infra\Repositories\Repositories.csproj" />
     <ProjectReference Include="..\..\4 - Infra\SqlServer\SqlServer.csproj" />
   </ItemGroup>

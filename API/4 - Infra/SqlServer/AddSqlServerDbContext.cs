@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Project.Entities;
-using Serilog;
 using SqlServer.Context;
 using SqlServer.Services;
 using System.Text;
@@ -16,15 +15,15 @@ namespace SqlServer;
 public static class AddSqlServerDbContext
 {
     /// <summary>
-    /// Registra o DbContext. Ordem: InMemory → SQLite (arquivo) → SQL Server (connection string válida) → fallback InMemory.
-    /// Dados financeiros ficam no Firestore (interface IFinanceStore em Repositories).
+    /// Registra o DbContext. Ordem: InMemory → SQLite (arquivo) → PostgreSQL (connection string válida) → fallback InMemory.
+    /// Dados financeiros usam <c>IFinanceStore</c> (memória no processo; <c>AddMemoryFinanceStore</c> no arranque).
     /// </summary>
     public static IServiceCollection AddSqlServerContext(
         this IServiceCollection services,
         IConfiguration configuration,
         string contentRootPath)
     {
-        var connectionString = configuration.GetConnectionString("SqlServer");
+        var connectionString = configuration.GetConnectionString("PostgreSQL");
         var useInMemory = configuration.GetValue<bool>("Database:UseInMemory", false);
         var useSqlite = configuration.GetValue<bool>("Database:UseSqlite", false);
         var sqliteRelativePath = configuration["Database:SqliteDatabasePath"] ?? "Data/finance.db";
@@ -56,7 +55,7 @@ public static class AddSqlServerDbContext
         else if (connectionStringValid)
         {
             services.AddDbContext<ApiServerContext>(options =>
-                options.UseSqlServer(connectionString, b => b.MigrationsAssembly("WebAPI"))
+                options.UseNpgsql(connectionString, b => b.MigrationsAssembly("WebAPI"))
                     .EnableSensitiveDataLogging());
         }
         else
