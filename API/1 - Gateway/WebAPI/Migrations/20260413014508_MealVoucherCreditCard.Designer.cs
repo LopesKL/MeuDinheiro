@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SqlServer.Context;
@@ -11,9 +12,11 @@ using SqlServer.Context;
 namespace WebAPI.Migrations
 {
     [DbContext(typeof(ApiServerContext))]
-    partial class ApiServerContextModelSnapshot : ModelSnapshot
+    [Migration("20260413014508_MealVoucherCreditCard")]
+    partial class MealVoucherCreditCard
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

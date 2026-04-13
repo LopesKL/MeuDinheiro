@@ -8,4 +8,5 @@ public class IncomeDto
     public string? Description { get; set; }
     public DateTime ReferenceMonth { get; set; }
     public Guid? BatchId { get; set; }
+    public Guid? CreditCardId { get; set; }
 }

@@ -14,5 +14,7 @@ public class Income
     public DateTime ReferenceMonth { get; set; }
     /// <summary>Quando preenchido, identifica rendas criadas no mesmo lançamento em lote (ex.: intervalo mensal).</summary>
     public Guid? BatchId { get; set; }
+    /// <summary>Referência opcional a cartão (ex.: estorno/cashback na fatura).</summary>
+    public Guid? CreditCardId { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

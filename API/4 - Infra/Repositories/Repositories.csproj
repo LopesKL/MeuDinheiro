@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\3 - Domain\Project\Project.csproj" />
     <ProjectReference Include="..\..\3 - Domain\Notifications\Notifications.csproj" />
     <ProjectReference Include="..\SqlServer\SqlServer.csproj" />

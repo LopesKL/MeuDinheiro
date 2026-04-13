@@ -41,7 +41,7 @@ const router = createBrowserRouter([
     element: (
       <LazyWrapper>
         <AuthorizedLayout>
-          <NotFound />
+          <RouteWrapper element={NotFound} roles={[]} />
         </AuthorizedLayout>
       </LazyWrapper>
     ),

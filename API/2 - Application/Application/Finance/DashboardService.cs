@@ -40,16 +40,18 @@ public class DashboardService
 
         var recurrings = await _finance.ListRecurringAsync(userId);
         await _finance.HydrateRecurringCategoriesAsync(recurrings, userId);
+        var recurringSchedules = await _finance.ListRecurringAmountSchedulesAsync(userId);
+        var schedulesByRec = recurringSchedules.ToLookup(s => s.RecurringExpenseId);
 
         var monthExpenseList = expensesWide.Where(e => e.Date >= start && e.Date < end).ToList();
         var monthInstallments = installmentsWide.Where(i => i.DueDate >= start && i.DueDate < end).ToList();
 
         var monthExpenseFromTable = monthExpenseList.Sum(e => e.Amount);
         var monthExpenseFromInstallments = monthInstallments.Sum(i => i.Amount);
-        var monthExpenseFromRecurringVirtual = SumActiveRecurringNotBooked(recurrings, monthExpenseList);
+        var monthExpenseFromRecurringVirtual = SumActiveRecurringNotBooked(recurrings, monthExpenseList, start, schedulesByRec);
         var monthExpense = monthExpenseFromTable + monthExpenseFromInstallments + monthExpenseFromRecurringVirtual;
 
-        var monthExpensesByCategory = BuildCategoryBreakdown(monthExpenseList, monthInstallments, recurrings);
+        var monthExpensesByCategory = BuildCategoryBreakdown(monthExpenseList, monthInstallments, recurrings, start, schedulesByRec);
 
         var patrimony = await _finance.SumAccountBalancesAsync(userId);
         var debtBalance = await _finance.SumDebtBalanceAsync(userId);
@@ -64,7 +66,7 @@ public class DashboardService
             var monthEx = expensesWide.Where(e => e.Date >= m && e.Date < mEnd).ToList();
             var exp = monthEx.Sum(e => e.Amount)
                 + installmentsWide.Where(x => x.DueDate >= m && x.DueDate < mEnd).Sum(x => x.Amount)
-                + SumActiveRecurringNotBooked(recurrings, monthEx);
+                + SumActiveRecurringNotBooked(recurrings, monthEx, m, schedulesByRec);
 
             flow.Add(new MonthlyFlowDto
             {
@@ -94,12 +96,18 @@ public class DashboardService
 
     private static bool RecurringHasBookedExpense(RecurringExpense r, List<Expense> monthExpenses) =>
         monthExpenses.Exists(e =>
-            e.CategoryId == r.CategoryId
-            && e.Amount == r.Amount
-            && e.Description == r.Description + " (recorrente)");
+            e.RecurringExpenseId == r.Id
+            || (e.RecurringExpenseId == null
+                && e.CategoryId == r.CategoryId
+                && e.Description == r.Description + " (recorrente)"));
 
-    private static decimal SumActiveRecurringNotBooked(IReadOnlyList<RecurringExpense> recurrings, List<Expense> monthExpenses)
+    private static decimal SumActiveRecurringNotBooked(
+        IReadOnlyList<RecurringExpense> recurrings,
+        List<Expense> monthExpenses,
+        DateTime monthStartUtc,
+        ILookup<Guid, RecurringExpenseAmountSchedule> schedulesByRec)
     {
+        var m = RecurringAmountResolver.NormalizeMonthStartUtc(monthStartUtc);
         decimal s = 0;
         foreach (var r in recurrings)
         {
@@ -107,7 +115,7 @@ public class DashboardService
                 continue;
             if (RecurringHasBookedExpense(r, monthExpenses))
                 continue;
-            s += r.Amount;
+            s += RecurringAmountResolver.EffectiveAmount(r, m, schedulesByRec[r.Id]);
         }
 
         return s;
@@ -116,7 +124,9 @@ public class DashboardService
     private static List<MonthExpenseCategorySliceDto> BuildCategoryBreakdown(
         List<Expense> monthExpenses,
         List<Installment> monthInstallments,
-        IReadOnlyList<RecurringExpense> recurrings)
+        IReadOnlyList<RecurringExpense> recurrings,
+        DateTime monthStartUtc,
+        ILookup<Guid, RecurringExpenseAmountSchedule> schedulesByRec)
     {
         var buckets = new Dictionary<string, CategoryBreakdownBucket>(StringComparer.OrdinalIgnoreCase);
 
@@ -157,16 +167,18 @@ public class DashboardService
             });
         }
 
+        var m = RecurringAmountResolver.NormalizeMonthStartUtc(monthStartUtc);
         foreach (var r in recurrings)
         {
             if (!r.Active || RecurringHasBookedExpense(r, monthExpenses))
                 continue;
             var title = string.IsNullOrWhiteSpace(r.Description) ? "Recorrente" : r.Description.Trim();
+            var amt = RecurringAmountResolver.EffectiveAmount(r, m, schedulesByRec[r.Id]);
             AddLine(r.Category?.Name, new MonthExpenseCategoryLineDto
             {
                 Kind = "recurring",
                 Title = $"{title} (previsto no mês)",
-                Amount = r.Amount,
+                Amount = amt,
                 Date = null
             });
         }

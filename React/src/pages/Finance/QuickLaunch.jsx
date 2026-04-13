@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, Form, Input, Button, Select, DatePicker, InputNumber, Typography, Divider } from 'antd';
 import dayjs from 'dayjs';
 import { financeApi, EXPENSE_CREATION_SOURCE } from '@services/financeApi';
 import { App } from 'antd';
 
 const { Title, Text } = Typography;
+
+const STORAGE_CARD = 'framework:selectedCreditCardId';
 
 const paymentOptions = [
   { value: 0, label: 'Dinheiro' },
@@ -17,23 +20,37 @@ const paymentOptions = [
 
 const QuickLaunch = () => {
   const { message } = App.useApp();
+  const [searchParams] = useSearchParams();
   const [form] = Form.useForm();
   const [parseForm] = Form.useForm();
   const [categories, setCategories] = useState([]);
+  const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const loadRefs = async () => {
-    try {
-      const cats = await financeApi.categories();
-      setCategories((cats || []).filter((c) => c.isExpense));
-    } catch (e) {
-      message.error(e.message || 'Erro ao carregar categorias');
-    }
-  };
-
   useEffect(() => {
-    loadRefs();
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        const [cats, cc] = await Promise.all([financeApi.categories(), financeApi.creditCards()]);
+        if (cancelled) return;
+        setCategories((cats || []).filter((c) => c.isExpense));
+        const list = cc || [];
+        setCards(list);
+        const fromUrl = searchParams.get('cartao');
+        const fromStorage = sessionStorage.getItem(STORAGE_CARD);
+        const id = fromUrl || fromStorage;
+        if (id && list.some((c) => c.id === id)) {
+          form.setFieldsValue({ creditCardId: id, paymentMethod: 2 });
+          sessionStorage.setItem(STORAGE_CARD, id);
+        }
+      } catch (e) {
+        if (!cancelled) message.error(e.message || 'Erro ao carregar categorias e cartões');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, form, message]);
 
   const onParse = async () => {
     const text = parseForm.getFieldValue('smart');
@@ -59,15 +76,16 @@ const QuickLaunch = () => {
   const onSave = async (values) => {
     setLoading(true);
     try {
+      const paymentMethod = values.creditCardId ? 2 : (values.paymentMethod ?? 5);
       await financeApi.expenseUpsert({
         id: '00000000-0000-0000-0000-000000000000',
         amount: values.amount,
         date: values.date?.toDate?.() ? values.date.toDate().toISOString() : new Date().toISOString(),
         categoryId: values.categoryId,
         description: values.description || 'Gasto',
-        paymentMethod: values.paymentMethod ?? 5,
+        paymentMethod,
         storeLocation: null,
-        creditCardId: null,
+        creditCardId: values.creditCardId || null,
         installmentPlanId: null,
         imagePath: null,
         creationSource: EXPENSE_CREATION_SOURCE.QUICK_LAUNCH,
@@ -75,7 +93,15 @@ const QuickLaunch = () => {
       message.success('Gasto registrado');
       form.resetFields();
       parseForm.resetFields();
-      form.setFieldsValue({ date: dayjs(), paymentMethod: 5 });
+      const fromUrl = searchParams.get('cartao');
+      const fromStorage = sessionStorage.getItem(STORAGE_CARD);
+      const keepId = fromUrl || fromStorage;
+      const hasCard = keepId && cards.some((c) => c.id === keepId);
+      form.setFieldsValue({
+        date: dayjs(),
+        paymentMethod: hasCard ? 2 : 5,
+        creditCardId: hasCard ? keepId : undefined,
+      });
     } catch (e) {
       message.error(e.message || 'Erro ao salvar');
     } finally {
@@ -88,7 +114,7 @@ const QuickLaunch = () => {
       <Title level={3} style={{ marginTop: 0 }}>
         Lançamento rápido
       </Title>
-      <Card title="Texto inteligente" style={{ marginBottom: 16 }}>
+      <Card style={{ marginBottom: 16 }}>
         <Text type="secondary">Ex.: &quot;50 mercado crédito&quot;</Text>
         <Form form={parseForm} layout="inline" style={{ marginTop: 12 }} onFinish={onParse}>
           <Form.Item name="smart" style={{ flex: 1, minWidth: 200,width: '100%'  }}>
@@ -99,7 +125,9 @@ const QuickLaunch = () => {
           </Button>
         </Form>
       </Card>
-      <Card title="Formulário">
+      <Card
+        title="Formulário"
+      >
         <Form
           form={form}
           layout="vertical"
@@ -128,6 +156,21 @@ const QuickLaunch = () => {
           </Form.Item>
           <Form.Item name="date" label="Data" rules={[{ required: true }]}>
             <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+          </Form.Item>
+          <Form.Item
+            name="creditCardId"
+            label="Cartão cadastrado (opcional)"
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="Selecione um cartão ou deixe em branco"
+              options={cards.map((c) => ({ value: c.id, label: c.name }))}
+              onChange={(v) => {
+                if (v) form.setFieldsValue({ paymentMethod: 2 });
+              }}
+            />
           </Form.Item>
           <Form.Item name="categoryId" label="Categoria" rules={[{ required: false }]}>
             <Select

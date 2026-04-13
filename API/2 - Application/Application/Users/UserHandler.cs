@@ -227,6 +227,7 @@ public class UserHandler
 
         await EnsureRoleUserExistsAsync();
         await _userManager.AddToRoleAsync(user, Roles.ROLE_USER);
+        await SeedDefaultFinanceDataAsync(user.Id);
 
         return _mapper.Map<UserDto>(user);
     }

@@ -55,8 +55,8 @@ try
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
 
-    builder.Services.AddMemoryFinanceStore();
     builder.Services.AddSqlServerContext(builder.Configuration, builder.Environment.ContentRootPath);
+    builder.Services.AddEfFinanceStore();
 
     builder.Services.AddApplication(builder.Configuration);
 

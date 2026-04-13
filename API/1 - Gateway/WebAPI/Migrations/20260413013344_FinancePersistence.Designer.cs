@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SqlServer.Context;
@@ -11,9 +12,11 @@ using SqlServer.Context;
 namespace WebAPI.Migrations
 {
     [DbContext(typeof(ApiServerContext))]
-    partial class ApiServerContextModelSnapshot : ModelSnapshot
+    [Migration("20260413013344_FinancePersistence")]
+    partial class FinancePersistence
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -355,16 +358,6 @@ namespace WebAPI.Migrations
 
                     b.Property<int>("DueDay")
                         .HasColumnType("integer");
-
-                    b.Property<bool>("IsMealVoucher")
-                        .HasColumnType("boolean");
-
-                    b.Property<int?>("MealVoucherCreditDay")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal?>("MealVoucherDailyAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("Name")
                         .IsRequired()

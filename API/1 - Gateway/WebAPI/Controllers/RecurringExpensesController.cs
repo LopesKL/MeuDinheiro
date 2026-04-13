@@ -51,4 +51,21 @@ public class RecurringExpensesController : BaseController
         var ok = await _service.DeleteAsync(userId, id);
         return ok ? HandleSuccess("Removido") : HandleResponse<RecurringExpenseDto?>(null);
     }
+
+    /// <summary>Define valor vigente a partir do mês informado (e meses futuros), sem alterar o valor base.</summary>
+    [HttpPost("{recurringId:guid}/amount-schedule")]
+    public async Task<IActionResult> SetAmountSchedule(Guid recurringId, [FromBody] SetRecurringAmountFromMonthDto dto)
+    {
+        var userId = CurrentUserId;
+        if (userId == null) return Unauthorized();
+        return HandleResponse(await _service.SetAmountFromMonthAsync(userId, recurringId, dto));
+    }
+
+    [HttpDelete("{recurringId:guid}/amount-schedule/{scheduleId:guid}")]
+    public async Task<IActionResult> DeleteAmountSchedule(Guid recurringId, Guid scheduleId)
+    {
+        var userId = CurrentUserId;
+        if (userId == null) return Unauthorized();
+        return HandleResponse(await _service.DeleteAmountScheduleAsync(userId, recurringId, scheduleId));
+    }
 }

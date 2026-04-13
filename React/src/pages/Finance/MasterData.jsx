@@ -17,11 +17,20 @@ import {
   Grid,
   Divider,
   Spin,
+  ColorPicker,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
+import {
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  LeftOutlined,
+  RightOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
-import { financeApi, EXPENSE_CREATION_SOURCE } from '@services/financeApi';
+import { financeApi, EXPENSE_CREATION_SOURCE, normalizeCreditCardPayload } from '@services/financeApi';
+import { countWeekdaysInMonth } from '@/utils/businessDays';
+import CsvImportNubankModal from '@components/Finance/CsvImportNubankModal';
 
 dayjs.locale('pt-br');
 import { App } from 'antd';
@@ -29,6 +38,17 @@ import { App } from 'antd';
 const { Title, Text } = Typography;
 
 const emptyGuid = '00000000-0000-0000-0000-000000000000';
+
+/** API pode enviar camelCase ou PascalCase; Select precisa de id/name válidos. */
+function normalizeFinanceCategory(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = raw.id ?? raw.Id;
+  if (id == null || id === '') return null;
+  const name = String(raw.name ?? raw.Name ?? '').trim() || '—';
+  const v = raw.isExpense ?? raw.IsExpense;
+  const isExpense = v === true || v === 'true' || v === 1;
+  return { ...raw, id, name, isExpense };
+}
 
 /**
  * Itens da aba de lançamentos: gasto marcado como Lançamento rápido (creationSource=1)
@@ -111,7 +131,7 @@ const mobileCardSx = {
   boxShadow: '0 1px 3px rgba(0, 0, 0, 0.06)',
 };
 
-function CrudMobileHeader({ count, addLabel, onAdd }) {
+function CrudMobileHeader({ count, addLabel, onAdd, extra }) {
   return (
     <div
       style={{
@@ -126,11 +146,54 @@ function CrudMobileHeader({ count, addLabel, onAdd }) {
       <Text style={{ fontSize: 15 }}>
         {count} {count === 1 ? 'registro' : 'registros'}
       </Text>
-      <Button type="primary" icon={<PlusOutlined />} onClick={onAdd} style={{ borderRadius: 8 }}>
-        {addLabel}
-      </Button>
+      <Space wrap>
+        {extra}
+        <Button type="primary" icon={<PlusOutlined />} onClick={onAdd} style={{ borderRadius: 8 }}>
+          {addLabel}
+        </Button>
+      </Space>
     </div>
   );
+}
+
+/** Barra padrão (desktop): contagem + botão que abre modal de cadastro */
+function TabActionBar({ count, addLabel, onAdd, extra }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+        gap: 12,
+        flexWrap: 'wrap',
+      }}
+    >
+      <Text type="secondary">
+        {count} {count === 1 ? 'registro' : 'registros'}
+      </Text>
+      <Space wrap>
+        {extra}
+        <Button type="primary" icon={<PlusOutlined />} onClick={onAdd}>
+          {addLabel}
+        </Button>
+      </Space>
+    </div>
+  );
+}
+
+const MODAL_TYPE_LABELS = {
+  cat: 'Categoria',
+  cc: 'Cartão',
+  acc: 'Conta',
+  debt: 'Dívida',
+  rec: 'Recorrente',
+  inc: 'Renda',
+};
+
+function tabKeyForModalType(type) {
+  const map = { cat: 'cat', cc: 'cc', acc: 'acc', debt: 'debt', rec: 'rec', inc: 'inc' };
+  return map[type] || null;
 }
 
 function MobileCrudCard({ rows, onEdit, onDelete, deleteTitle, footer }) {
@@ -186,15 +249,20 @@ const MasterData = () => {
   const [recurring, setRecurring] = useState([]);
   const [plans, setPlans] = useState([]);
   const [incomes, setIncomes] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [tabLoading, setTabLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [launchMonth, setLaunchMonth] = useState(() => dayjs().startOf('month'));
   const [monthExpenses, setMonthExpenses] = useState([]);
   const [monthLaunchLoading, setMonthLaunchLoading] = useState(false);
   const [launchFetchTick, setLaunchFetchTick] = useState(0);
+  const [planModalOpen, setPlanModalOpen] = useState(false);
 
   const [modal, setModal] = useState({ open: false, type: '', record: null });
   const [form] = Form.useForm();
+  const modalCcKind = Form.useWatch('cardKind', form);
   const [planForm] = Form.useForm();
+  const [recScheduleModal, setRecScheduleModal] = useState({ open: false, recurring: null });
+  const [recScheduleForm] = Form.useForm();
   const incomeSpreadMode = Form.useWatch('incomeSpreadMode', form);
 
   const { incomeGroups, incomeStandalone } = useMemo(
@@ -202,36 +270,75 @@ const MasterData = () => {
     [incomes]
   );
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [c, cc, a, d, r, p, inc] = await Promise.all([
-        financeApi.categories(),
-        financeApi.creditCards(),
-        financeApi.accounts(),
-        financeApi.debts(),
-        financeApi.recurring(),
-        financeApi.installmentPlans(),
-        financeApi.incomes(),
-      ]);
-      setCategories(c || []);
-      setCards(cc || []);
-      setAccounts(a || []);
-      setDebts(d || []);
-      setRecurring(r || []);
-      setPlans(p || []);
-      setIncomes(inc || []);
-    } catch (e) {
-      message.error(e.message || 'Erro ao carregar cadastros');
-    } finally {
-      setLoading(false);
-      setLaunchFetchTick((t) => t + 1);
-    }
-  }, [message]);
+  const loadTabData = useCallback(
+    async (tabKey) => {
+      setTabLoading(true);
+      try {
+        switch (tabKey) {
+          case 'inc': {
+            const [inc, cc] = await Promise.all([financeApi.incomes(), financeApi.creditCards()]);
+            setIncomes(inc || []);
+            setCards(cc || []);
+            break;
+          }
+          case 'cat': {
+            const c = await financeApi.categories();
+            setCategories(c || []);
+            break;
+          }
+          case 'rec': {
+            const [r, c, cc] = await Promise.all([
+              financeApi.recurring(),
+              financeApi.categories(),
+              financeApi.creditCards(),
+            ]);
+            setRecurring(r || []);
+            setCategories(c || []);
+            setCards(cc || []);
+            break;
+          }
+          case 'plan': {
+            const [p, c, cc] = await Promise.all([
+              financeApi.installmentPlans(),
+              financeApi.categories(),
+              financeApi.creditCards(),
+            ]);
+            setPlans(p || []);
+            setCategories(c || []);
+            setCards(cc || []);
+            break;
+          }
+          case 'cc': {
+            const cc = await financeApi.creditCards();
+            setCards(cc || []);
+            break;
+          }
+          case 'acc': {
+            const a = await financeApi.accounts();
+            setAccounts(a || []);
+            break;
+          }
+          case 'debt': {
+            const d = await financeApi.debts();
+            setDebts(d || []);
+            break;
+          }
+          default:
+            break;
+        }
+      } catch (e) {
+        message.error(e.message || 'Erro ao carregar dados');
+      } finally {
+        setTabLoading(false);
+      }
+    },
+    [message]
+  );
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (active === 'mov') return;
+    loadTabData(active);
+  }, [active, loadTabData]);
 
   useEffect(() => {
     if (active !== 'mov') return undefined;
@@ -284,6 +391,7 @@ const MasterData = () => {
     if (record) {
       const patch = { ...record };
       if (patch.dueDate) patch.dueDate = dayjs(patch.dueDate);
+      if (type === 'cc') patch.cardKind = patch.isMealVoucher ? 'meal' : 'credit';
       form.setFieldsValue(patch);
     } else if (type === 'debt') {
       form.setFieldsValue({ id: emptyGuid, paidAmount: 0, totalAmount: 0 });
@@ -292,7 +400,7 @@ const MasterData = () => {
     } else if (type === 'acc') {
       form.setFieldsValue({ id: emptyGuid, type: 0, balance: 0, currency: 'BRL' });
     } else if (type === 'cc') {
-      form.setFieldsValue({ id: emptyGuid, closingDay: 10, dueDay: 15 });
+      form.setFieldsValue({ id: emptyGuid, cardKind: 'credit', closingDay: 10, dueDay: 15 });
     } else if (type === 'cat') {
       form.setFieldsValue({ id: emptyGuid, isExpense: true });
     } else if (type === 'inc') {
@@ -308,14 +416,14 @@ const MasterData = () => {
 
   const submitModal = async () => {
     const v = await form.validateFields();
-    setLoading(true);
+    setSaving(true);
     try {
       let successMsg = 'Salvo';
       if (modal.type === 'cat') {
         if (!v.id || v.id === emptyGuid) await financeApi.categoryCreate(v);
         else await financeApi.categoryUpdate(v.id, v);
       } else if (modal.type === 'cc') {
-        await financeApi.creditCardUpsert(v);
+        await financeApi.creditCardUpsert(normalizeCreditCardPayload(v));
       } else if (modal.type === 'acc') {
         await financeApi.accountUpsert(v);
       } else if (modal.type === 'debt') {
@@ -332,6 +440,7 @@ const MasterData = () => {
             amount: v.amount,
             description: v.description,
             batchId,
+            creditCardId: v.creditCardId || null,
           };
           for (const m of months) {
             await financeApi.incomeUpsert({
@@ -348,27 +457,34 @@ const MasterData = () => {
             ...v,
             referenceMonth: rm.toISOString(),
             batchId: v.batchId || modal.record?.batchId || null,
+            creditCardId: v.creditCardId || null,
           });
         }
       }
       message.success(successMsg);
       setModal({ open: false, type: '', record: null });
-      await refresh();
+      const tk = tabKeyForModalType(modal.type);
+      if (tk) await loadTabData(tk);
     } catch (e) {
-      if (e?.errorFields) return;
+      if (e?.errorFields) throw e;
       message.error(e.message || 'Erro ao salvar');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
+  const openPlanModal = () => {
+    planForm.resetFields();
+    setPlanModalOpen(true);
+  };
+
   const submitPlan = async () => {
-    const v = await planForm.validateFields();
-    setLoading(true);
+    setSaving(true);
     try {
+      const v = await planForm.validateFields();
       await financeApi.installmentPlanCreate({
         id: emptyGuid,
-        creditCardId: null,
+        creditCardId: v.creditCardId || null,
         categoryId: v.categoryId,
         description: v.description,
         totalAmount: v.totalAmount,
@@ -378,14 +494,21 @@ const MasterData = () => {
       });
       message.success('Plano criado com parcelas');
       planForm.resetFields();
-      await refresh();
+      setPlanModalOpen(false);
+      await loadTabData('plan');
     } catch (e) {
-      if (e?.errorFields) return;
+      if (e?.errorFields) throw e;
       message.error(e.message || 'Erro ao criar plano');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
+
+  const ensureCsvImportLookups = useCallback(async () => {
+    const [c, cc] = await Promise.all([financeApi.categories(), financeApi.creditCards()]);
+    setCategories(Array.isArray(c) ? c : []);
+    setCards(Array.isArray(cc) ? cc : []);
+  }, []);
 
   const catCols = [
     { title: 'Nome', dataIndex: 'name', key: 'name' },
@@ -398,7 +521,7 @@ const MasterData = () => {
           <Button size="small" onClick={() => openModal('cat', r)}>
             Editar
           </Button>
-          <Popconfirm title="Remover?" onConfirm={() => financeApi.categoryDelete(r.id).then(refresh)}>
+          <Popconfirm title="Remover?" onConfirm={() => financeApi.categoryDelete(r.id).then(() => loadTabData('cat'))}>
             <Button size="small" danger>
               Excluir
             </Button>
@@ -410,8 +533,24 @@ const MasterData = () => {
 
   const ccCols = [
     { title: 'Nome', dataIndex: 'name', key: 'name' },
-    { title: 'Fechamento', dataIndex: 'closingDay', key: 'closingDay' },
-    { title: 'Vencimento', dataIndex: 'dueDay', key: 'dueDay' },
+    {
+      title: 'Tipo',
+      key: 'tipo',
+      width: 130,
+      render: (_, r) => (r.isMealVoucher ? 'Vale alimentação' : 'Crédito'),
+    },
+    {
+      title: 'Fechamento',
+      dataIndex: 'closingDay',
+      key: 'closingDay',
+      render: (v, r) => (r.isMealVoucher ? '—' : v),
+    },
+    {
+      title: 'Vencimento',
+      dataIndex: 'dueDay',
+      key: 'dueDay',
+      render: (v, r) => (r.isMealVoucher ? '—' : v),
+    },
     {
       title: 'Ações',
       key: 'a',
@@ -420,7 +559,7 @@ const MasterData = () => {
           <Button size="small" onClick={() => openModal('cc', r)}>
             Editar
           </Button>
-          <Popconfirm title="Remover?" onConfirm={() => financeApi.creditCardDelete(r.id).then(refresh)}>
+          <Popconfirm title="Remover?" onConfirm={() => financeApi.creditCardDelete(r.id).then(() => loadTabData('cc'))}>
             <Button size="small" danger>
               Excluir
             </Button>
@@ -441,7 +580,7 @@ const MasterData = () => {
           <Button size="small" onClick={() => openModal('acc', r)}>
             Editar
           </Button>
-          <Popconfirm title="Remover?" onConfirm={() => financeApi.accountDelete(r.id).then(refresh)}>
+          <Popconfirm title="Remover?" onConfirm={() => financeApi.accountDelete(r.id).then(() => loadTabData('acc'))}>
             <Button size="small" danger>
               Excluir
             </Button>
@@ -462,7 +601,7 @@ const MasterData = () => {
           <Button size="small" onClick={() => openModal('debt', r)}>
             Editar
           </Button>
-          <Popconfirm title="Remover?" onConfirm={() => financeApi.debtDelete(r.id).then(refresh)}>
+          <Popconfirm title="Remover?" onConfirm={() => financeApi.debtDelete(r.id).then(() => loadTabData('debt'))}>
             <Button size="small" danger>
               Excluir
             </Button>
@@ -472,20 +611,60 @@ const MasterData = () => {
     },
   ];
 
+  const incomeCardLabel = (creditCardId) => {
+    if (!creditCardId) return '—';
+    const c = cards.find((x) => x.id === creditCardId);
+    return c?.name ?? '—';
+  };
+
+  const recurringScheduleList = (r) => r?.amountSchedules ?? r?.AmountSchedules ?? [];
+
+  const recurringEffectiveAmount = (r) => {
+    const e = r?.effectiveAmount ?? r?.EffectiveAmount;
+    if (e != null && e !== '') return Number(e);
+    return Number(r?.amount ?? r?.Amount ?? 0);
+  };
+
   const recCols = [
     { title: 'Descrição', dataIndex: 'description', key: 'description' },
-    { title: 'Valor', dataIndex: 'amount', key: 'amount', render: formatMoney },
+    {
+      title: 'Vigente (mês atual)',
+      key: 'effectiveAmount',
+      render: (_, r) => formatMoney(recurringEffectiveAmount(r)),
+    },
+    {
+      title: 'Valor base',
+      key: 'baseAmount',
+      render: (_, r) => formatMoney(Number(r.amount ?? r.Amount ?? 0)),
+    },
     { title: 'Dia', dataIndex: 'dayOfMonth', key: 'dayOfMonth' },
+    {
+      title: 'Cartão',
+      key: 'recCc',
+      width: 120,
+      ellipsis: true,
+      render: (_, r) => incomeCardLabel(r.creditCardId),
+    },
     { title: 'Ativo', dataIndex: 'active', key: 'active', render: (x) => (x ? 'Sim' : 'Não') },
     {
       title: 'Ações',
       key: 'a',
       render: (_, r) => (
-        <Space>
+        <Space wrap>
           <Button size="small" onClick={() => openModal('rec', r)}>
             Editar
           </Button>
-          <Popconfirm title="Remover?" onConfirm={() => financeApi.recurringDelete(r.id).then(refresh)}>
+          <Button
+            size="small"
+            onClick={() => {
+              setRecScheduleModal({ open: true, recurring: r });
+              recScheduleForm.resetFields();
+              recScheduleForm.setFieldsValue({ effectiveFrom: dayjs().startOf('month') });
+            }}
+          >
+            Vigências
+          </Button>
+          <Popconfirm title="Remover?" onConfirm={() => financeApi.recurringDelete(r.id).then(() => loadTabData('rec'))}>
             <Button size="small" danger>
               Excluir
             </Button>
@@ -500,10 +679,17 @@ const MasterData = () => {
     { title: 'Total', dataIndex: 'totalAmount', key: 'totalAmount', render: formatMoney },
     { title: 'Parcelas', dataIndex: 'installmentCount', key: 'installmentCount' },
     {
+      title: 'Cartão',
+      key: 'planCc',
+      width: 130,
+      ellipsis: true,
+      render: (_, r) => incomeCardLabel(r.creditCardId),
+    },
+    {
       title: 'Ações',
       key: 'a',
       render: (_, r) => (
-        <Popconfirm title="Excluir plano (sem parcelas pagas)?" onConfirm={() => financeApi.installmentPlanDelete(r.id).then(refresh)}>
+        <Popconfirm title="Excluir plano (sem parcelas pagas)?" onConfirm={() => financeApi.installmentPlanDelete(r.id).then(() => loadTabData('plan'))}>
           <Button size="small" danger>
             Excluir
           </Button>
@@ -512,7 +698,24 @@ const MasterData = () => {
     },
   ];
 
-  const expenseCats = categories.filter((c) => c.isExpense);
+  const expenseCats = useMemo(() => {
+    const norm = (categories || []).map(normalizeFinanceCategory).filter(Boolean);
+    const onlyExpense = norm.filter((c) => c.isExpense);
+    /* Se nada veio como despesa (flag errada no JSON ou só receitas), lista todas para não travar o import. */
+    return onlyExpense.length > 0 ? onlyExpense : norm;
+  }, [categories]);
+
+  const planCsvImportExtra = (
+    <CsvImportNubankModal
+      expenseCats={expenseCats}
+      cards={cards}
+      onSyncLookups={ensureCsvImportLookups}
+      onImported={async ({ anyPlan, anyRec }) => {
+        if (anyPlan) await loadTabData('plan');
+        if (anyRec) await loadTabData('rec');
+      }}
+    />
+  );
 
   const isIncomeEdit = modal.type === 'inc' && modal.record;
 
@@ -595,6 +798,13 @@ const MasterData = () => {
       render: (d) => (d ? dayjs(d).format('MM/YYYY') : '—'),
     },
     {
+      title: 'Cartão',
+      key: 'creditCard',
+      width: 140,
+      ellipsis: true,
+      render: (_, r) => incomeCardLabel(r.creditCardId),
+    },
+    {
       title: 'Ações',
       key: 'ai',
       render: (_, r) => (
@@ -616,7 +826,7 @@ const MasterData = () => {
             onConfirm={async () => {
               try {
                 await financeApi.incomeDelete(r.id);
-                await refresh();
+                await loadTabData('inc');
               } catch (e) {
                 message.error(e.message);
               }
@@ -636,7 +846,7 @@ const MasterData = () => {
       <Title level={3} style={{ marginTop: 0 }}>
         Cadastros
       </Title>
-      <Card loading={loading}>
+      <Card>
         {isMobile ? (
           <Select
             value={active}
@@ -665,417 +875,7 @@ const MasterData = () => {
           </Space>
         )}
 
-        {active === 'inc' && (
-          <div>
-            {isMobile ? (
-              <>
-                <CrudMobileHeader count={incomes.length} addLabel="Nova renda" onAdd={() => openModal('inc')} />
-                {incomeGroups.map((g) => (
-                  <div key={g.batchId} style={{ marginBottom: 16 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                        marginBottom: 10,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div>
-                        <Text strong>{g.source}</Text>
-                        <div>
-                          <Text type="secondary" style={{ fontSize: 12 }}>
-                            {g.minM && g.maxM
-                              ? `${dayjs(g.minM).format('MM/YYYY')} – ${dayjs(g.maxM).format('MM/YYYY')} · ${g.items.length} meses`
-                              : `${g.items.length} meses`}{' '}
-                            · {formatMoney(g.total)}
-                          </Text>
-                        </div>
-                      </div>
-                      <Popconfirm
-                        title="Remover todas as rendas deste grupo?"
-                        onConfirm={async () => {
-                          try {
-                            setLoading(true);
-                            await Promise.all(g.items.map((x) => financeApi.incomeDelete(x.id)));
-                            message.success('Grupo removido');
-                            await refresh();
-                          } catch (e) {
-                            message.error(e.message || 'Erro ao remover');
-                          } finally {
-                            setLoading(false);
-                          }
-                        }}
-                      >
-                        <Button size="small" danger style={{ borderRadius: 8 }}>
-                          Excluir grupo
-                        </Button>
-                      </Popconfirm>
-                    </div>
-                    {g.items.map((r) => (
-                      <MobileCrudCard
-                        key={r.id}
-                        rows={[
-                          { label: 'Fonte', value: r.source },
-                          { label: 'Valor', value: formatMoney(r.amount) },
-                          {
-                            label: 'Mês ref.',
-                            value: r.referenceMonth ? dayjs(r.referenceMonth).format('MM/YYYY') : '—',
-                          },
-                        ]}
-                        onEdit={() =>
-                          openModal('inc', {
-                            ...r,
-                            referenceMonth: r.referenceMonth ? dayjs(r.referenceMonth) : dayjs(),
-                            batchId: r.batchId ?? undefined,
-                          })
-                        }
-                        onDelete={async () => {
-                          try {
-                            await financeApi.incomeDelete(r.id);
-                            await refresh();
-                          } catch (e) {
-                            message.error(e.message);
-                          }
-                        }}
-                        deleteTitle="Remover renda?"
-                      />
-                    ))}
-                  </div>
-                ))}
-                {incomeStandalone.length > 0 && (
-                  <>
-                    {incomeGroups.length > 0 && (
-                      <Title level={5} style={{ margin: '16px 0 8px' }}>
-                        Rendas avulsas
-                      </Title>
-                    )}
-                    {incomeStandalone.map((r) => (
-                      <MobileCrudCard
-                        key={r.id}
-                        rows={[
-                          { label: 'Fonte', value: r.source },
-                          { label: 'Valor', value: formatMoney(r.amount) },
-                          {
-                            label: 'Mês ref.',
-                            value: r.referenceMonth ? dayjs(r.referenceMonth).format('MM/YYYY') : '—',
-                          },
-                        ]}
-                        onEdit={() =>
-                          openModal('inc', {
-                            ...r,
-                            referenceMonth: r.referenceMonth ? dayjs(r.referenceMonth) : dayjs(),
-                            batchId: r.batchId ?? undefined,
-                          })
-                        }
-                        onDelete={async () => {
-                          try {
-                            await financeApi.incomeDelete(r.id);
-                            await refresh();
-                          } catch (e) {
-                            message.error(e.message);
-                          }
-                        }}
-                        deleteTitle="Remover renda?"
-                      />
-                    ))}
-                  </>
-                )}
-                {incomes.length === 0 && <Text type="secondary">Nenhuma renda cadastrada.</Text>}
-              </>
-            ) : (
-              <>
-                <Button type="primary" onClick={() => openModal('inc')} style={{ marginBottom: 12 }}>
-                  Nova renda
-                </Button>
-                {incomeGroups.map((g) => (
-                  <Card
-                    key={g.batchId}
-                    size="small"
-                    style={{ marginBottom: 12 }}
-                    title={
-                      <Space wrap size="middle">
-                        <Text strong>{g.source}</Text>
-                        <Text type="secondary">
-                          {g.minM && g.maxM
-                            ? `${dayjs(g.minM).format('MM/YYYY')} – ${dayjs(g.maxM).format('MM/YYYY')} · ${g.items.length} meses`
-                            : `${g.items.length} meses`}
-                        </Text>
-                        <Text>{formatMoney(g.total)} no período</Text>
-                      </Space>
-                    }
-                    extra={
-                      <Popconfirm
-                        title="Remover todas as rendas deste grupo?"
-                        onConfirm={async () => {
-                          try {
-                            setLoading(true);
-                            await Promise.all(g.items.map((x) => financeApi.incomeDelete(x.id)));
-                            message.success('Grupo removido');
-                            await refresh();
-                          } catch (e) {
-                            message.error(e.message || 'Erro ao remover');
-                          } finally {
-                            setLoading(false);
-                          }
-                        }}
-                      >
-                        <Button size="small" danger>
-                          Excluir grupo
-                        </Button>
-                      </Popconfirm>
-                    }
-                  >
-                    <Table
-                      rowKey="id"
-                      columns={incomeCols}
-                      dataSource={g.items}
-                      pagination={false}
-                      size="small"
-                      scroll={{ x: true }}
-                    />
-                  </Card>
-                ))}
-                {incomeStandalone.length > 0 && (
-                  <>
-                    {incomeGroups.length > 0 && (
-                      <Title level={5} style={{ marginTop: incomeGroups.length ? 8 : 0 }}>
-                        Rendas avulsas
-                      </Title>
-                    )}
-                    <Table
-                      rowKey="id"
-                      columns={incomeCols}
-                      dataSource={incomeStandalone}
-                      pagination={false}
-                      scroll={{ x: true }}
-                    />
-                  </>
-                )}
-                {incomeGroups.length === 0 && incomeStandalone.length === 0 && (
-                  <Table rowKey="id" columns={incomeCols} dataSource={[]} pagination={false} />
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {active === 'cat' && (
-          <div>
-            {isMobile ? (
-              <>
-                <CrudMobileHeader
-                  count={categories.length}
-                  addLabel="Nova categoria"
-                  onAdd={() => openModal('cat')}
-                />
-                {categories.map((r) => (
-                  <MobileCrudCard
-                    key={r.id}
-                    rows={[
-                      { label: 'Nome', value: r.name },
-                      { label: 'Despesa?', value: r.isExpense ? 'Sim' : 'Não' },
-                    ]}
-                    onEdit={() => openModal('cat', r)}
-                    onDelete={() => financeApi.categoryDelete(r.id).then(refresh)}
-                    deleteTitle="Remover?"
-                  />
-                ))}
-              </>
-            ) : (
-              <>
-                <Button type="primary" onClick={() => openModal('cat')} style={{ marginBottom: 12 }}>
-                  Nova categoria
-                </Button>
-                <Table rowKey="id" columns={catCols} dataSource={categories} pagination={false} scroll={{ x: true }} />
-              </>
-            )}
-          </div>
-        )}
-
-        {active === 'cc' && (
-          <div>
-            {isMobile ? (
-              <>
-                <CrudMobileHeader count={cards.length} addLabel="Novo cartão" onAdd={() => openModal('cc')} />
-                {cards.map((r) => (
-                  <MobileCrudCard
-                    key={r.id}
-                    rows={[
-                      { label: 'Nome', value: r.name },
-                      { label: 'Fechamento', value: r.closingDay },
-                      { label: 'Vencimento', value: r.dueDay },
-                    ]}
-                    onEdit={() => openModal('cc', r)}
-                    onDelete={() => financeApi.creditCardDelete(r.id).then(refresh)}
-                    deleteTitle="Remover?"
-                  />
-                ))}
-              </>
-            ) : (
-              <>
-                <Button type="primary" onClick={() => openModal('cc')} style={{ marginBottom: 12 }}>
-                  Novo cartão
-                </Button>
-                <Table rowKey="id" columns={ccCols} dataSource={cards} pagination={false} scroll={{ x: true }} />
-              </>
-            )}
-          </div>
-        )}
-
-        {active === 'acc' && (
-          <div>
-            {isMobile ? (
-              <>
-                <CrudMobileHeader count={accounts.length} addLabel="Nova conta" onAdd={() => openModal('acc')} />
-                {accounts.map((r) => (
-                  <MobileCrudCard
-                    key={r.id}
-                    rows={[
-                      { label: 'Nome', value: r.name },
-                      { label: 'Saldo', value: formatMoney(r.balance) },
-                    ]}
-                    onEdit={() => openModal('acc', r)}
-                    onDelete={() => financeApi.accountDelete(r.id).then(refresh)}
-                    deleteTitle="Remover?"
-                  />
-                ))}
-              </>
-            ) : (
-              <>
-                <Button type="primary" onClick={() => openModal('acc')} style={{ marginBottom: 12 }}>
-                  Nova conta
-                </Button>
-                <Table rowKey="id" columns={accCols} dataSource={accounts} pagination={false} scroll={{ x: true }} />
-              </>
-            )}
-          </div>
-        )}
-
-        {active === 'debt' && (
-          <div>
-            {isMobile ? (
-              <>
-                <CrudMobileHeader count={debts.length} addLabel="Nova dívida" onAdd={() => openModal('debt')} />
-                {debts.map((r) => (
-                  <MobileCrudCard
-                    key={r.id}
-                    rows={[
-                      { label: 'Nome', value: r.name },
-                      { label: 'Saldo', value: formatMoney(r.balance) },
-                    ]}
-                    onEdit={() => openModal('debt', r)}
-                    onDelete={() => financeApi.debtDelete(r.id).then(refresh)}
-                    deleteTitle="Remover?"
-                  />
-                ))}
-              </>
-            ) : (
-              <>
-                <Button type="primary" onClick={() => openModal('debt')} style={{ marginBottom: 12 }}>
-                  Nova dívida
-                </Button>
-                <Table rowKey="id" columns={debtCols} dataSource={debts} pagination={false} scroll={{ x: true }} />
-              </>
-            )}
-          </div>
-        )}
-
-        {active === 'rec' && (
-          <div>
-            {isMobile ? (
-              <>
-                <CrudMobileHeader
-                  count={recurring.length}
-                  addLabel="Novo recorrente"
-                  onAdd={() => openModal('rec')}
-                />
-                {recurring.map((r) => (
-                  <MobileCrudCard
-                    key={r.id}
-                    rows={[
-                      { label: 'Descrição', value: r.description },
-                      { label: 'Valor', value: formatMoney(r.amount) },
-                      { label: 'Dia', value: r.dayOfMonth },
-                      { label: 'Ativo', value: r.active ? 'Sim' : 'Não' },
-                    ]}
-                    onEdit={() => openModal('rec', r)}
-                    onDelete={() => financeApi.recurringDelete(r.id).then(refresh)}
-                    deleteTitle="Remover?"
-                  />
-                ))}
-              </>
-            ) : (
-              <>
-                <Button type="primary" onClick={() => openModal('rec')} style={{ marginBottom: 12 }}>
-                  Novo recorrente
-                </Button>
-                <Table rowKey="id" columns={recCols} dataSource={recurring} pagination={false} scroll={{ x: true }} />
-              </>
-            )}
-          </div>
-        )}
-
-        {active === 'plan' && (
-          <div>
-            <Card size="small" title="Novo parcelamento" style={{ marginBottom: 16, borderRadius: 12 }}>
-              <Form form={planForm} layout="vertical" onFinish={submitPlan}>
-                <Form.Item name="description" label="Descrição" rules={[{ required: true }]}>
-                  <Input />
-                </Form.Item>
-                <Form.Item name="categoryId" label="Categoria" rules={[{ required: true }]}>
-                  <Select options={expenseCats.map((c) => ({ value: c.id, label: c.name }))} showSearch optionFilterProp="label" />
-                </Form.Item>
-                <Form.Item name="totalAmount" label="Valor total" rules={[{ required: true }]}>
-                  <InputNumber min={0.01} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="installmentCount" label="Nº parcelas" rules={[{ required: true }]}>
-                  <InputNumber min={1} max={120} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item name="startDate" label="1ª parcela" rules={[{ required: true }]}>
-                  <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
-                </Form.Item>
-                <Button type="primary" htmlType="submit">
-                  Gerar parcelas
-                </Button>
-              </Form>
-            </Card>
-            {isMobile ? (
-              <>
-                <div style={{ marginBottom: 16 }}>
-                  <Text style={{ fontSize: 15 }}>
-                    {plans.length} {plans.length === 1 ? 'registro' : 'registros'}
-                  </Text>
-                </div>
-                {plans.map((r) => (
-                  <MobileCrudCard
-                    key={r.id}
-                    rows={[
-                      { label: 'Descrição', value: r.description },
-                      { label: 'Total', value: formatMoney(r.totalAmount) },
-                      { label: 'Parcelas', value: r.installmentCount },
-                    ]}
-                    footer={
-                      <Popconfirm
-                        title="Excluir plano (sem parcelas pagas)?"
-                        onConfirm={() => financeApi.installmentPlanDelete(r.id).then(refresh)}
-                      >
-                        <Button danger block icon={<DeleteOutlined />} style={{ borderRadius: 8 }}>
-                          Excluir
-                        </Button>
-                      </Popconfirm>
-                    }
-                  />
-                ))}
-              </>
-            ) : (
-              <Table rowKey="id" columns={planCols} dataSource={plans} pagination={false} scroll={{ x: true }} />
-            )}
-          </div>
-        )}
-
-        {active === 'mov' && (
+        {active === 'mov' ? (
           <div>
             <Space
               wrap
@@ -1158,15 +958,492 @@ const MasterData = () => {
               )}
             </Spin>
           </div>
+        ) : (
+          <Spin spinning={tabLoading}>
+        {active === 'inc' && (
+          <div>
+            {isMobile ? (
+              <>
+                <CrudMobileHeader count={incomes.length} addLabel="Nova renda" onAdd={() => openModal('inc')} />
+                {incomeGroups.map((g) => (
+                  <div key={g.batchId} style={{ marginBottom: 16 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                        marginBottom: 10,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div>
+                        <Text strong>{g.source}</Text>
+                        <div>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {g.minM && g.maxM
+                              ? `${dayjs(g.minM).format('MM/YYYY')} – ${dayjs(g.maxM).format('MM/YYYY')} · ${g.items.length} meses`
+                              : `${g.items.length} meses`}{' '}
+                            · {formatMoney(g.total)}
+                          </Text>
+                        </div>
+                      </div>
+                      <Popconfirm
+                        title="Remover todas as rendas deste grupo?"
+                        onConfirm={async () => {
+                          try {
+                            setTabLoading(true);
+                            await Promise.all(g.items.map((x) => financeApi.incomeDelete(x.id)));
+                            message.success('Grupo removido');
+                            await loadTabData('inc');
+                          } catch (e) {
+                            message.error(e.message || 'Erro ao remover');
+                          } finally {
+                            setTabLoading(false);
+                          }
+                        }}
+                      >
+                        <Button size="small" danger style={{ borderRadius: 8 }}>
+                          Excluir grupo
+                        </Button>
+                      </Popconfirm>
+                    </div>
+                    {g.items.map((r) => (
+                      <MobileCrudCard
+                        key={r.id}
+                        rows={[
+                          { label: 'Fonte', value: r.source },
+                          { label: 'Valor', value: formatMoney(r.amount) },
+                          {
+                            label: 'Mês ref.',
+                            value: r.referenceMonth ? dayjs(r.referenceMonth).format('MM/YYYY') : '—',
+                          },
+                          { label: 'Cartão', value: incomeCardLabel(r.creditCardId) },
+                        ]}
+                        onEdit={() =>
+                          openModal('inc', {
+                            ...r,
+                            referenceMonth: r.referenceMonth ? dayjs(r.referenceMonth) : dayjs(),
+                            batchId: r.batchId ?? undefined,
+                          })
+                        }
+                        onDelete={async () => {
+                          try {
+                            await financeApi.incomeDelete(r.id);
+                            await loadTabData('inc');
+                          } catch (e) {
+                            message.error(e.message);
+                          }
+                        }}
+                        deleteTitle="Remover renda?"
+                      />
+                    ))}
+                  </div>
+                ))}
+                {incomeStandalone.length > 0 && (
+                  <>
+                    {incomeGroups.length > 0 && (
+                      <Title level={5} style={{ margin: '16px 0 8px' }}>
+                        Rendas avulsas
+                      </Title>
+                    )}
+                    {incomeStandalone.map((r) => (
+                      <MobileCrudCard
+                        key={r.id}
+                        rows={[
+                          { label: 'Fonte', value: r.source },
+                          { label: 'Valor', value: formatMoney(r.amount) },
+                          {
+                            label: 'Mês ref.',
+                            value: r.referenceMonth ? dayjs(r.referenceMonth).format('MM/YYYY') : '—',
+                          },
+                          { label: 'Cartão', value: incomeCardLabel(r.creditCardId) },
+                        ]}
+                        onEdit={() =>
+                          openModal('inc', {
+                            ...r,
+                            referenceMonth: r.referenceMonth ? dayjs(r.referenceMonth) : dayjs(),
+                            batchId: r.batchId ?? undefined,
+                          })
+                        }
+                        onDelete={async () => {
+                          try {
+                            await financeApi.incomeDelete(r.id);
+                            await loadTabData('inc');
+                          } catch (e) {
+                            message.error(e.message);
+                          }
+                        }}
+                        deleteTitle="Remover renda?"
+                      />
+                    ))}
+                  </>
+                )}
+                {incomes.length === 0 && <Text type="secondary">Nenhuma renda cadastrada.</Text>}
+              </>
+            ) : (
+              <>
+                <TabActionBar
+                  count={incomes.length}
+                  addLabel="Nova renda"
+                  onAdd={() => openModal('inc')}
+                />
+                {incomeGroups.map((g) => (
+                  <Card
+                    key={g.batchId}
+                    size="small"
+                    style={{ marginBottom: 12 }}
+                    title={
+                      <Space wrap size="middle">
+                        <Text strong>{g.source}</Text>
+                        <Text type="secondary">
+                          {g.minM && g.maxM
+                            ? `${dayjs(g.minM).format('MM/YYYY')} – ${dayjs(g.maxM).format('MM/YYYY')} · ${g.items.length} meses`
+                            : `${g.items.length} meses`}
+                        </Text>
+                        <Text>{formatMoney(g.total)} no período</Text>
+                      </Space>
+                    }
+                    extra={
+                      <Popconfirm
+                        title="Remover todas as rendas deste grupo?"
+                        onConfirm={async () => {
+                          try {
+                            setTabLoading(true);
+                            await Promise.all(g.items.map((x) => financeApi.incomeDelete(x.id)));
+                            message.success('Grupo removido');
+                            await loadTabData('inc');
+                          } catch (e) {
+                            message.error(e.message || 'Erro ao remover');
+                          } finally {
+                            setTabLoading(false);
+                          }
+                        }}
+                      >
+                        <Button size="small" danger>
+                          Excluir grupo
+                        </Button>
+                      </Popconfirm>
+                    }
+                  >
+                    <Table
+                      rowKey="id"
+                      columns={incomeCols}
+                      dataSource={g.items}
+                      pagination={false}
+                      size="small"
+                      scroll={{ x: true }}
+                    />
+                  </Card>
+                ))}
+                {incomeStandalone.length > 0 && (
+                  <>
+                    {incomeGroups.length > 0 && (
+                      <Title level={5} style={{ marginTop: incomeGroups.length ? 8 : 0 }}>
+                        Rendas avulsas
+                      </Title>
+                    )}
+                    <Table
+                      rowKey="id"
+                      columns={incomeCols}
+                      dataSource={incomeStandalone}
+                      pagination={false}
+                      scroll={{ x: true }}
+                    />
+                  </>
+                )}
+                {incomeGroups.length === 0 && incomeStandalone.length === 0 && (
+                  <Table rowKey="id" columns={incomeCols} dataSource={[]} pagination={false} />
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {active === 'cat' && (
+          <div>
+            {isMobile ? (
+              <>
+                <CrudMobileHeader
+                  count={categories.length}
+                  addLabel="Nova categoria"
+                  onAdd={() => openModal('cat')}
+                />
+                {categories.map((r) => (
+                  <MobileCrudCard
+                    key={r.id}
+                    rows={[
+                      { label: 'Nome', value: r.name },
+                      { label: 'Despesa?', value: r.isExpense ? 'Sim' : 'Não' },
+                    ]}
+                    onEdit={() => openModal('cat', r)}
+                    onDelete={() => financeApi.categoryDelete(r.id).then(() => loadTabData('cat'))}
+                    deleteTitle="Remover?"
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                <TabActionBar
+                  count={categories.length}
+                  addLabel="Nova categoria"
+                  onAdd={() => openModal('cat')}
+                />
+                <Table rowKey="id" columns={catCols} dataSource={categories} pagination={false} scroll={{ x: true }} />
+              </>
+            )}
+          </div>
+        )}
+
+        {active === 'cc' && (
+          <div>
+            {isMobile ? (
+              <>
+                <CrudMobileHeader count={cards.length} addLabel="Novo cartão" onAdd={() => openModal('cc')} />
+                {cards.map((r) => (
+                  <MobileCrudCard
+                    key={r.id}
+                    rows={[
+                      { label: 'Nome', value: r.name },
+                      {
+                        label: 'Tipo',
+                        value: r.isMealVoucher ? 'Vale alimentação' : 'Crédito',
+                      },
+                      ...(r.isMealVoucher
+                        ? [
+                            { label: 'Valor/dia útil', value: formatMoney(r.mealVoucherDailyAmount) },
+                            { label: 'Dia crédito', value: r.mealVoucherCreditDay },
+                          ]
+                        : [
+                            { label: 'Fechamento', value: r.closingDay },
+                            { label: 'Vencimento', value: r.dueDay },
+                          ]),
+                    ]}
+                    onEdit={() => openModal('cc', r)}
+                    onDelete={() => financeApi.creditCardDelete(r.id).then(() => loadTabData('cc'))}
+                    deleteTitle="Remover?"
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                <TabActionBar count={cards.length} addLabel="Novo cartão" onAdd={() => openModal('cc')} />
+                <Table rowKey="id" columns={ccCols} dataSource={cards} pagination={false} scroll={{ x: true }} />
+              </>
+            )}
+          </div>
+        )}
+
+        {active === 'acc' && (
+          <div>
+            {isMobile ? (
+              <>
+                <CrudMobileHeader count={accounts.length} addLabel="Nova conta" onAdd={() => openModal('acc')} />
+                {accounts.map((r) => (
+                  <MobileCrudCard
+                    key={r.id}
+                    rows={[
+                      { label: 'Nome', value: r.name },
+                      { label: 'Saldo', value: formatMoney(r.balance) },
+                    ]}
+                    onEdit={() => openModal('acc', r)}
+                    onDelete={() => financeApi.accountDelete(r.id).then(() => loadTabData('acc'))}
+                    deleteTitle="Remover?"
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                <TabActionBar count={accounts.length} addLabel="Nova conta" onAdd={() => openModal('acc')} />
+                <Table rowKey="id" columns={accCols} dataSource={accounts} pagination={false} scroll={{ x: true }} />
+              </>
+            )}
+          </div>
+        )}
+
+        {active === 'debt' && (
+          <div>
+            {isMobile ? (
+              <>
+                <CrudMobileHeader count={debts.length} addLabel="Nova dívida" onAdd={() => openModal('debt')} />
+                {debts.map((r) => (
+                  <MobileCrudCard
+                    key={r.id}
+                    rows={[
+                      { label: 'Nome', value: r.name },
+                      { label: 'Saldo', value: formatMoney(r.balance) },
+                    ]}
+                    onEdit={() => openModal('debt', r)}
+                    onDelete={() => financeApi.debtDelete(r.id).then(() => loadTabData('debt'))}
+                    deleteTitle="Remover?"
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                <TabActionBar count={debts.length} addLabel="Nova dívida" onAdd={() => openModal('debt')} />
+                <Table rowKey="id" columns={debtCols} dataSource={debts} pagination={false} scroll={{ x: true }} />
+              </>
+            )}
+          </div>
+        )}
+
+        {active === 'rec' && (
+          <div>
+            {isMobile ? (
+              <>
+                <CrudMobileHeader
+                  count={recurring.length}
+                  addLabel="Novo recorrente"
+                  onAdd={() => openModal('rec')}
+                />
+                {recurring.map((r) => (
+                  <MobileCrudCard
+                    key={r.id}
+                    rows={[
+                      { label: 'Descrição', value: r.description },
+                      { label: 'Vigente (mês atual)', value: formatMoney(recurringEffectiveAmount(r)) },
+                      { label: 'Valor base', value: formatMoney(Number(r.amount ?? r.Amount ?? 0)) },
+                      { label: 'Dia', value: r.dayOfMonth },
+                      { label: 'Cartão', value: incomeCardLabel(r.creditCardId) },
+                      { label: 'Ativo', value: r.active ? 'Sim' : 'Não' },
+                    ]}
+                    footer={
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <Button icon={<EditOutlined />} onClick={() => openModal('rec', r)} block style={{ borderRadius: 8 }}>
+                          Editar
+                        </Button>
+                        <Button
+                          block
+                          style={{ borderRadius: 8 }}
+                          onClick={() => {
+                            setRecScheduleModal({ open: true, recurring: r });
+                            recScheduleForm.resetFields();
+                            recScheduleForm.setFieldsValue({ effectiveFrom: dayjs().startOf('month') });
+                          }}
+                        >
+                          Vigências
+                        </Button>
+                        <Popconfirm title="Remover?" onConfirm={() => financeApi.recurringDelete(r.id).then(() => loadTabData('rec'))}>
+                          <Button danger block icon={<DeleteOutlined />} style={{ borderRadius: 8 }}>
+                            Excluir
+                          </Button>
+                        </Popconfirm>
+                      </div>
+                    }
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                <TabActionBar
+                  count={recurring.length}
+                  addLabel="Novo recorrente"
+                  onAdd={() => openModal('rec')}
+                />
+                <Table rowKey="id" columns={recCols} dataSource={recurring} pagination={false} scroll={{ x: true }} />
+              </>
+            )}
+          </div>
+        )}
+
+        {active === 'plan' && (
+          <div>
+            {isMobile ? (
+              <>
+                <CrudMobileHeader
+                  count={plans.length}
+                  addLabel="Novo parcelamento"
+                  onAdd={openPlanModal}
+                  extra={planCsvImportExtra}
+                />
+                {plans.map((r) => (
+                  <MobileCrudCard
+                    key={r.id}
+                    rows={[
+                      { label: 'Descrição', value: r.description },
+                      { label: 'Total', value: formatMoney(r.totalAmount) },
+                      { label: 'Parcelas', value: r.installmentCount },
+                      { label: 'Cartão', value: incomeCardLabel(r.creditCardId) },
+                    ]}
+                    footer={
+                      <Popconfirm
+                        title="Excluir plano (sem parcelas pagas)?"
+                        onConfirm={() => financeApi.installmentPlanDelete(r.id).then(() => loadTabData('plan'))}
+                      >
+                        <Button danger block icon={<DeleteOutlined />} style={{ borderRadius: 8 }}>
+                          Excluir
+                        </Button>
+                      </Popconfirm>
+                    }
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                <TabActionBar
+                  count={plans.length}
+                  addLabel="Novo parcelamento"
+                  onAdd={openPlanModal}
+                  extra={planCsvImportExtra}
+                />
+                <Table rowKey="id" columns={planCols} dataSource={plans} pagination={false} scroll={{ x: true }} />
+              </>
+            )}
+          </div>
+        )}
+          </Spin>
         )}
       </Card>
 
       <Modal
+        open={planModalOpen}
+        title="Novo parcelamento"
+        okText="Gerar parcelas"
+        onCancel={() => setPlanModalOpen(false)}
+        onOk={() => submitPlan()}
+        confirmLoading={saving}
+        destroyOnClose
+        width={520}
+      >
+        <Form form={planForm} layout="vertical">
+          <Form.Item name="description" label="Descrição" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="categoryId" label="Categoria" rules={[{ required: true }]}>
+            <Select options={expenseCats.map((c) => ({ value: c.id, label: c.name }))} showSearch optionFilterProp="label" />
+          </Form.Item>
+          <Form.Item
+            name="creditCardId"
+            label="Cartão de crédito (opcional)"
+            extra="Parcelas geradas serão lançadas como gastos neste cartão, quando informado."
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="Nenhum"
+              options={cards.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Form.Item>
+          <Form.Item name="totalAmount" label="Valor total" rules={[{ required: true }]}>
+            <InputNumber min={0.01} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="installmentCount" label="Nº parcelas" rules={[{ required: true }]}>
+            <InputNumber min={1} max={120} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="startDate" label="1ª parcela" rules={[{ required: true }]}>
+            <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
         open={modal.open}
-        title="Cadastro"
+        title={modal.record ? `Editar ${MODAL_TYPE_LABELS[modal.type] || 'item'}` : `Nova ${MODAL_TYPE_LABELS[modal.type] || 'entrada'}`}
         onCancel={() => setModal({ open: false, type: '', record: null })}
         onOk={submitModal}
-        confirmLoading={loading}
+        confirmLoading={saving}
         destroyOnClose
         width={520}
       >
@@ -1189,11 +1466,59 @@ const MasterData = () => {
               <Form.Item name="name" label="Nome" rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
-              <Form.Item name="closingDay" label="Dia fechamento" rules={[{ required: true }]}>
-                <InputNumber min={1} max={31} style={{ width: '100%' }} />
+              <Form.Item name="cardKind" label="Tipo" rules={[{ required: true }]}>
+                <Select
+                  options={[
+                    { value: 'credit', label: 'Cartão de crédito' },
+                    { value: 'meal', label: 'Vale alimentação' },
+                  ]}
+                />
               </Form.Item>
-              <Form.Item name="dueDay" label="Dia vencimento" rules={[{ required: true }]}>
-                <InputNumber min={1} max={31} style={{ width: '100%' }} />
+              {modalCcKind === 'meal' ? (
+                <>
+                  <Form.Item
+                    name="mealVoucherDailyAmount"
+                    label="Valor fixo por dia útil"
+                    rules={[
+                      { required: true, message: 'Informe o valor por dia útil' },
+                      { type: 'number', min: 0.01, message: 'Valor deve ser maior que zero' },
+                    ]}
+                  >
+                    <InputNumber prefix="R$" min={0.01} style={{ width: '100%' }} controls={false} />
+                  </Form.Item>
+                  <Form.Item
+                    name="mealVoucherCreditDay"
+                    label="Dia do crédito no mês"
+                    rules={[{ required: true, message: 'Informe o dia (1–31)' }]}
+                  >
+                    <InputNumber min={1} max={31} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                    Crédito mensal estimado = valor × dias úteis (seg–sex) do mês. Ex.:{' '}
+                    {countWeekdaysInMonth(dayjs().year(), dayjs().month() + 1)} dias úteis neste mês.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Form.Item name="closingDay" label="Dia fechamento" rules={[{ required: true }]}>
+                    <InputNumber min={1} max={31} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item name="dueDay" label="Dia vencimento" rules={[{ required: true }]}>
+                    <InputNumber min={1} max={31} style={{ width: '100%' }} />
+                  </Form.Item>
+                </>
+              )}
+              <Form.Item
+                name="themeColor"
+                label="Cor de identificação"
+                extra="Usada no dashboard ao listar e filtrar cartões (#RGB ou #RRGGBB)."
+                getValueFromEvent={(val) => {
+                  if (val == null) return undefined;
+                  if (typeof val.toHexString === 'function') return val.toHexString();
+                  return val;
+                }}
+              >
+                <ColorPicker showText format="hex" allowClear style={{ width: '100%' }} />
               </Form.Item>
             </>
           )}
@@ -1291,6 +1616,19 @@ const MasterData = () => {
               <Form.Item name="description" label="Descrição">
                 <Input />
               </Form.Item>
+              <Form.Item
+                name="creditCardId"
+                label="Cartão de crédito (opcional)"
+                extra="Útil para vincular renda a um cartão (ex.: cashback, estorno na fatura)."
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Nenhum"
+                  options={cards.map((c) => ({ value: c.id, label: c.name }))}
+                />
+              </Form.Item>
             </>
           )}
           {modal.type === 'rec' && (
@@ -1304,7 +1642,12 @@ const MasterData = () => {
                   { value: 1, label: 'Variável' },
                 ]} />
               </Form.Item>
-              <Form.Item name="amount" label="Valor" rules={[{ required: true }]}>
+              <Form.Item
+                name="amount"
+                label="Valor base"
+                rules={[{ required: true }]}
+                extra="Padrão quando não há vigência para o mês. Use o botão Vigências na lista para alterar a partir de um mês específico."
+              >
                 <InputNumber min={0.01} style={{ width: '100%' }} />
               </Form.Item>
               <Form.Item name="categoryId" label="Categoria" rules={[{ required: true }]}>
@@ -1320,17 +1663,133 @@ const MasterData = () => {
                   { value: 5, label: 'Outro' },
                 ]} />
               </Form.Item>
+              <Form.Item
+                name="creditCardId"
+                label="Cartão de crédito (opcional)"
+                extra="Se pagamento for no crédito, associe ao cartão cadastrado."
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Nenhum"
+                  options={cards.map((c) => ({ value: c.id, label: c.name }))}
+                />
+              </Form.Item>
               <Form.Item name="dayOfMonth" label="Dia do mês" rules={[{ required: true }]}>
                 <InputNumber min={1} max={31} style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item name="creditCardId" label="Cartão">
-                <Select allowClear options={cards.map((c) => ({ value: c.id, label: c.name }))} />
               </Form.Item>
               <Form.Item name="active" label="Ativo" valuePropName="checked">
                 <Switch />
               </Form.Item>
             </>
           )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title={
+          recScheduleModal.recurring
+            ? `Vigências — ${(recScheduleModal.recurring.description || '').trim() || 'Recorrente'}`
+            : 'Vigências'
+        }
+        open={recScheduleModal.open}
+        onCancel={() => {
+          setRecScheduleModal({ open: false, recurring: null });
+          recScheduleForm.resetFields();
+        }}
+        footer={null}
+        destroyOnClose
+        width={520}
+      >
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          Cada vigência define o valor a partir do 1º dia do mês escolhido. O mês atual e os futuros usam a vigência mais
+          recente; meses anteriores ao primeiro ajuste seguem o valor base.
+        </Text>
+        {recurringScheduleList(recScheduleModal.recurring).length > 0 && (
+          <Table
+            size="small"
+            pagination={false}
+            style={{ marginBottom: 16 }}
+            rowKey={(row) => row.id ?? row.Id}
+            dataSource={recurringScheduleList(recScheduleModal.recurring)}
+            columns={[
+              {
+                title: 'A partir de',
+                dataIndex: 'effectiveFrom',
+                key: 'effectiveFrom',
+                render: (d) => (d ? dayjs(d).format('MM/YYYY') : '—'),
+              },
+              {
+                title: 'Valor',
+                dataIndex: 'amount',
+                key: 'amount',
+                render: (a) => formatMoney(Number(a ?? 0)),
+              },
+              {
+                title: '',
+                key: 'del',
+                width: 88,
+                render: (_, row) => (
+                  <Popconfirm
+                    title="Remover esta vigência?"
+                    onConfirm={async () => {
+                      const rid = recScheduleModal.recurring.id ?? recScheduleModal.recurring.Id;
+                      const sid = row.id ?? row.Id;
+                      try {
+                        await financeApi.recurringAmountScheduleDelete(rid, sid);
+                        message.success('Vigência removida');
+                        await loadTabData('rec');
+                        const updated = (await financeApi.recurring()) || [];
+                        const next = updated.find((x) => (x.id ?? x.Id) === rid);
+                        setRecScheduleModal((s) => ({ ...s, recurring: next || null }));
+                      } catch (e) {
+                        message.error(e.message || 'Erro ao remover');
+                      }
+                    }}
+                  >
+                    <Button size="small" danger type="link">
+                      Remover
+                    </Button>
+                  </Popconfirm>
+                ),
+              },
+            ]}
+          />
+        )}
+        <Divider plain>Nova vigência</Divider>
+        <Form
+          form={recScheduleForm}
+          layout="vertical"
+          onFinish={async (v) => {
+            const rid = recScheduleModal.recurring?.id ?? recScheduleModal.recurring?.Id;
+            if (!rid) return;
+            try {
+              await financeApi.recurringAmountSchedule(rid, {
+                effectiveFrom: v.effectiveFrom.startOf('month').toDate().toISOString(),
+                amount: v.amount,
+              });
+              message.success('Vigência salva');
+              recScheduleForm.resetFields();
+              recScheduleForm.setFieldsValue({ effectiveFrom: dayjs().startOf('month') });
+              await loadTabData('rec');
+              const updated = (await financeApi.recurring()) || [];
+              const next = updated.find((x) => (x.id ?? x.Id) === rid);
+              setRecScheduleModal((s) => ({ ...s, recurring: next || s.recurring }));
+            } catch (e) {
+              message.error(e.message || 'Erro ao salvar');
+            }
+          }}
+        >
+          <Form.Item name="effectiveFrom" label="Válido a partir de (mês)" rules={[{ required: true }]}>
+            <DatePicker picker="month" style={{ width: '100%' }} format="MM/YYYY" />
+          </Form.Item>
+          <Form.Item name="amount" label="Valor neste período" rules={[{ required: true }]}>
+            <InputNumber min={0.01} style={{ width: '100%' }} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit">
+            Salvar vigência
+          </Button>
         </Form>
       </Modal>
     </div>

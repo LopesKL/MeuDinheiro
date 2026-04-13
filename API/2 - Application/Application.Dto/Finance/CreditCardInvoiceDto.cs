@@ -8,4 +8,12 @@ public class CreditCardInvoiceDto
     public int Month { get; set; }
     public decimal Total { get; set; }
     public List<ExpenseDto> Expenses { get; set; } = new();
+
+    public bool IsMealVoucher { get; set; }
+    public decimal? MealVoucherDailyAmount { get; set; }
+    public int? MealVoucherCreditDay { get; set; }
+    /// <summary>Segunda a sexta no mês de referência.</summary>
+    public int BusinessDaysInMonth { get; set; }
+    /// <summary><see cref="MealVoucherDailyAmount"/> × <see cref="BusinessDaysInMonth"/>.</summary>
+    public decimal ExpectedMonthlyCredit { get; set; }
 }

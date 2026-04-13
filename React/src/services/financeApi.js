@@ -10,6 +10,25 @@ export const EXPENSE_CREATION_SOURCE = {
   UPLOAD_RECEIPT: 2,
 };
 
+/**
+ * Monta o body do POST /api/CreditCards a partir do formulário (tipo crédito vs vale alimentação).
+ * @param {object} values - inclui cardKind: 'credit' | 'meal'
+ */
+export function normalizeCreditCardPayload(values) {
+  const kind = values.cardKind === 'meal' || values.isMealVoucher === true ? 'meal' : 'credit';
+  const isMeal = kind === 'meal';
+  return {
+    id: values.id,
+    name: values.name,
+    themeColor: values.themeColor,
+    isMealVoucher: isMeal,
+    closingDay: isMeal ? 1 : values.closingDay,
+    dueDay: isMeal ? 1 : values.dueDay,
+    mealVoucherDailyAmount: isMeal ? values.mealVoucherDailyAmount : null,
+    mealVoucherCreditDay: isMeal ? values.mealVoucherCreditDay : null,
+  };
+}
+
 export async function unwrap(request) {
   const { data } = await request;
   if (data && data.success === false) {
@@ -70,6 +89,10 @@ export const financeApi = {
   recurring: () => unwrap(Api.get('/api/RecurringExpenses')),
   recurringUpsert: (body) => unwrap(Api.post('/api/RecurringExpenses', body)),
   recurringDelete: (id) => unwrap(Api.delete(`/api/RecurringExpenses/${id}`)),
+  recurringAmountSchedule: (recurringId, body) =>
+    unwrap(Api.post(`/api/RecurringExpenses/${recurringId}/amount-schedule`, body)),
+  recurringAmountScheduleDelete: (recurringId, scheduleId) =>
+    unwrap(Api.delete(`/api/RecurringExpenses/${recurringId}/amount-schedule/${scheduleId}`)),
 
   accounts: () => unwrap(Api.get('/api/Accounts')),
   accountsTotal: () => unwrap(Api.get('/api/Accounts/total')),

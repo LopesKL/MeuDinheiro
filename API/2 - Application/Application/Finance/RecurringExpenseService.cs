@@ -19,13 +19,20 @@ public class RecurringExpenseService
     public async Task<List<RecurringExpenseDto>> GetAllAsync(string userId)
     {
         var list = await _finance.ListRecurringAsync(userId);
-        return list.Select(Map).ToList();
+        var schedules = await _finance.ListRecurringAmountSchedulesAsync(userId);
+        var byRec = schedules.ToLookup(s => s.RecurringExpenseId);
+        var nowMonth = RecurringAmountResolver.NormalizeMonthStartUtc(DateTime.UtcNow);
+        return list.Select(r => MapEnriched(r, byRec[r.Id], nowMonth)).ToList();
     }
 
     public async Task<RecurringExpenseDto?> GetByIdAsync(string userId, Guid id)
     {
         var r = await _finance.GetRecurringAsync(userId, id);
-        return r == null ? null : Map(r);
+        if (r == null)
+            return null;
+        var schedules = await _finance.ListRecurringAmountSchedulesAsync(userId, id);
+        var nowMonth = RecurringAmountResolver.NormalizeMonthStartUtc(DateTime.UtcNow);
+        return MapEnriched(r, schedules, nowMonth);
     }
 
     public async Task<RecurringExpenseDto?> UpsertAsync(string userId, RecurringExpenseDto dto)
@@ -69,7 +76,7 @@ public class RecurringExpenseService
             };
             await _finance.InsertRecurringAsync(entity);
             await TryAccrueIfDueInCurrentMonthAsync(entity);
-            return Map(entity);
+            return await GetByIdAsync(userId, entity.Id);
         }
 
         var existing = await _finance.GetRecurringAsync(userId, dto.Id);
@@ -88,7 +95,7 @@ public class RecurringExpenseService
         existing.Active = dto.Active;
         existing.CreditCardId = dto.CreditCardId;
         await _finance.UpdateRecurringAsync(existing);
-        return Map(existing);
+        return await GetByIdAsync(userId, existing.Id);
     }
 
     public async Task<bool> DeleteAsync(string userId, Guid id)
@@ -102,6 +109,61 @@ public class RecurringExpenseService
 
         await _finance.DeleteRecurringAsync(userId, id);
         return true;
+    }
+
+    public async Task<RecurringExpenseDto?> SetAmountFromMonthAsync(string userId, Guid recurringId, SetRecurringAmountFromMonthDto dto,
+        CancellationToken ct = default)
+    {
+        if (dto.Amount <= 0)
+        {
+            _notification.DefaultBuilder("Rec_06", "Valor inválido");
+            return null;
+        }
+
+        var r = await _finance.GetRecurringAsync(userId, recurringId);
+        if (r == null)
+        {
+            _notification.DefaultBuilder("Rec_07", "Recorrente não encontrado");
+            return null;
+        }
+
+        var from = RecurringAmountResolver.NormalizeMonthStartUtc(dto.EffectiveFrom);
+        var entity = new RecurringExpenseAmountSchedule
+        {
+            UserId = userId,
+            RecurringExpenseId = recurringId,
+            EffectiveFrom = from,
+            Amount = dto.Amount
+        };
+        await _finance.UpsertRecurringAmountScheduleAsync(entity, ct);
+        return await GetByIdAsync(userId, recurringId);
+    }
+
+    public async Task<RecurringExpenseDto?> DeleteAmountScheduleAsync(string userId, Guid recurringId, Guid scheduleId,
+        CancellationToken ct = default)
+    {
+        var r = await _finance.GetRecurringAsync(userId, recurringId);
+        if (r == null)
+        {
+            _notification.DefaultBuilder("Rec_08", "Recorrente não encontrado");
+            return null;
+        }
+
+        var schedules = await _finance.ListRecurringAmountSchedulesAsync(userId, recurringId, ct);
+        if (schedules.All(s => s.Id != scheduleId))
+        {
+            _notification.DefaultBuilder("Rec_09", "Vigência não encontrada");
+            return null;
+        }
+
+        var ok = await _finance.DeleteRecurringAmountScheduleAsync(userId, scheduleId, ct);
+        if (!ok)
+        {
+            _notification.DefaultBuilder("Rec_09", "Vigência não encontrada");
+            return null;
+        }
+
+        return await GetByIdAsync(userId, recurringId);
     }
 
     public async Task TryAccrueIfDueInCurrentMonthAsync(RecurringExpense r, CancellationToken ct = default)
@@ -119,16 +181,20 @@ public class RecurringExpenseService
         if (today.Day < chargeDay)
             return;
 
+        var schedules = await _finance.ListRecurringAmountSchedulesAsync(r.UserId, r.Id, ct);
+        var amount = RecurringAmountResolver.EffectiveAmount(r, monthKey, schedules);
+
         var expenseDate = new DateTime(today.Year, today.Month, chargeDay);
         var expense = new Expense
         {
             UserId = r.UserId,
-            Amount = r.Amount,
+            Amount = amount,
             Date = expenseDate,
             CategoryId = r.CategoryId,
             Description = r.Description + " (recorrente)",
             PaymentMethod = r.PaymentMethod,
-            CreditCardId = r.CreditCardId
+            CreditCardId = r.CreditCardId,
+            RecurringExpenseId = r.Id
         };
         await _finance.InsertExpenseAsync(expense);
         r.LastGeneratedMonth = monthKey;
@@ -141,6 +207,8 @@ public class RecurringExpenseService
         var monthKey = new DateTime(today.Year, today.Month, 1);
 
         var recs = await _finance.ListActiveRecurringForDayOfMonthAsync(today.Day, ct);
+        var allSchedules = await _finance.ListRecurringAmountSchedulesAsync(userId: null, recurringExpenseId: null, ct);
+        var byRec = allSchedules.ToLookup(s => s.RecurringExpenseId);
 
         var count = 0;
         foreach (var r in recs)
@@ -148,15 +216,18 @@ public class RecurringExpenseService
             if (r.LastGeneratedMonth == monthKey)
                 continue;
 
+            var amount = RecurringAmountResolver.EffectiveAmount(r, monthKey, byRec[r.Id]);
+
             var expense = new Expense
             {
                 UserId = r.UserId,
-                Amount = r.Amount,
+                Amount = amount,
                 Date = today.Date,
                 CategoryId = r.CategoryId,
                 Description = r.Description + " (recorrente)",
                 PaymentMethod = r.PaymentMethod,
-                CreditCardId = r.CreditCardId
+                CreditCardId = r.CreditCardId,
+                RecurringExpenseId = r.Id
             };
             await _finance.InsertExpenseAsync(expense);
             r.LastGeneratedMonth = monthKey;
@@ -167,16 +238,35 @@ public class RecurringExpenseService
         return count;
     }
 
-    private static RecurringExpenseDto Map(RecurringExpense r) => new()
+    private static RecurringExpenseDto MapEnriched(
+        RecurringExpense r,
+        IEnumerable<RecurringExpenseAmountSchedule> schedulesForRecurring,
+        DateTime referenceMonthFirstUtc)
     {
-        Id = r.Id,
-        Type = (int)r.Type,
-        Amount = r.Amount,
-        CategoryId = r.CategoryId,
-        Description = r.Description,
-        PaymentMethod = (int)r.PaymentMethod,
-        DayOfMonth = r.DayOfMonth,
-        Active = r.Active,
-        CreditCardId = r.CreditCardId
-    };
+        var list = schedulesForRecurring as IList<RecurringExpenseAmountSchedule> ?? schedulesForRecurring.ToList();
+        var eff = RecurringAmountResolver.EffectiveAmount(r, referenceMonthFirstUtc, list);
+        return new RecurringExpenseDto
+        {
+            Id = r.Id,
+            Type = (int)r.Type,
+            Amount = r.Amount,
+            EffectiveAmount = eff,
+            AmountSchedules = list
+                .OrderBy(s => s.EffectiveFrom)
+                .Select(s => new RecurringAmountScheduleDto
+                {
+                    Id = s.Id,
+                    RecurringExpenseId = s.RecurringExpenseId,
+                    EffectiveFrom = s.EffectiveFrom,
+                    Amount = s.Amount
+                })
+                .ToList(),
+            CategoryId = r.CategoryId,
+            Description = r.Description,
+            PaymentMethod = (int)r.PaymentMethod,
+            DayOfMonth = r.DayOfMonth,
+            Active = r.Active,
+            CreditCardId = r.CreditCardId
+        };
+    }
 }

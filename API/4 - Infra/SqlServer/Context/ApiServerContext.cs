@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Project.Entities;
+using Project.Entities.Finance;
+using SqlServer.Finance;
 using SqlServer.Interfaces;
 
 namespace SqlServer.Context;
@@ -14,6 +16,18 @@ public class ApiServerContext : IdentityDbContext<AppUser, AppRole, string, Iden
     }
 
     public DbSet<Crud> Crud { get; set; } = null!;
+
+    public DbSet<Category> FinanceCategories => Set<Category>();
+    public DbSet<Expense> FinanceExpenses => Set<Expense>();
+    public DbSet<Income> FinanceIncomes => Set<Income>();
+    public DbSet<CreditCard> FinanceCreditCards => Set<CreditCard>();
+    public DbSet<InstallmentPlan> FinanceInstallmentPlans => Set<InstallmentPlan>();
+    public DbSet<Installment> FinanceInstallments => Set<Installment>();
+    public DbSet<RecurringExpense> FinanceRecurringExpenses => Set<RecurringExpense>();
+    public DbSet<RecurringExpenseAmountSchedule> FinanceRecurringAmountSchedules => Set<RecurringExpenseAmountSchedule>();
+    public DbSet<Debt> FinanceDebts => Set<Debt>();
+    public DbSet<Account> FinanceAccounts => Set<Account>();
+    public DbSet<PatrimonyMonthlySnapshot> FinancePatrimonySnapshots => Set<PatrimonyMonthlySnapshot>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -37,5 +51,7 @@ public class ApiServerContext : IdentityDbContext<AppUser, AppRole, string, Iden
             entity.HasIndex(e => e.UpdatedBy);
             entity.HasIndex(e => e.IsDeleted);
         });
+
+        builder.ConfigureFinance();
     }
 }

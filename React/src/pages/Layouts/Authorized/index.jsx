@@ -12,6 +12,7 @@ import {
   MenuUnfoldOutlined,
 } from '@ant-design/icons';
 import { colors } from '@styles/colors';
+import logoMeuDinheiro from '@/assets/Logo minimalista de finanças.png';
 
 const { Header, Sider, Content } = Layout;
 
@@ -141,17 +142,28 @@ const AuthorizedLayout = ({ children }) => {
         <div
           style={{
             height: 64,
-            margin: 16,
-            background: colors.primary,
-            borderRadius: 4,
+            margin: 4,
+            padding: 0,
+            background: "transparent",
+            borderRadius: 8,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: colors.white,
-            fontWeight: 'bold',
+            overflow: 'hidden',
           }}
         >
-          {collapsed ? 'F' : 'Finanças'}
+          <img
+            src={logoMeuDinheiro}
+            alt="Meu Dinheiro"
+            style={{
+              maxWidth: '100%',
+              maxHeight: '100%',
+              width: 'auto',
+              height: 'auto',
+              objectFit: 'contain',
+              display: 'block',
+            }}
+          />
         </div>
         <Menu
           theme="dark"

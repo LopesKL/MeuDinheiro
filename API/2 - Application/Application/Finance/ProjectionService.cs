@@ -36,8 +36,25 @@ public class ProjectionService
 
         var avgIncome = incomeCount > 0 ? incomeSum / incomeCount : 0m;
 
-        var recurringFixed = await _finance.SumRecurringAsync(userId, true, RecurringExpenseType.Fixed);
-        var recurringVar = await _finance.SumRecurringAsync(userId, true, RecurringExpenseType.Variable);
+        var recs = await _finance.ListRecurringAsync(userId);
+        var schedules = await _finance.ListRecurringAmountSchedulesAsync(userId);
+        var byRec = schedules.ToLookup(s => s.RecurringExpenseId);
+
+        (decimal recurringFixed, decimal recurringVar) RecurringForMonth(DateTime monthFirst)
+        {
+            var m = RecurringAmountResolver.NormalizeMonthStartUtc(monthFirst);
+            decimal rf = 0, rv = 0;
+            foreach (var r in recs.Where(x => x.Active))
+            {
+                var a = RecurringAmountResolver.EffectiveAmount(r, m, byRec[r.Id]);
+                if (r.Type == RecurringExpenseType.Fixed)
+                    rf += a;
+                else
+                    rv += a;
+            }
+
+            return (rf, rv);
+        }
 
         var installmentsDue = await _finance.ListUnpaidInstallmentsForUserPlansAsync(userId);
 
@@ -50,7 +67,7 @@ public class ProjectionService
 
         var patrimony = await _finance.SumAccountBalancesAsync(userId);
 
-        return BuildProjection(monthsAhead, start, avgIncome, recurringFixed, recurringVar / 2,
+        return BuildProjection(monthsAhead, start, avgIncome, RecurringForMonth,
             installmentMonthly, debtMonthly, patrimony);
     }
 
@@ -70,16 +87,18 @@ public class ProjectionService
             }
         }
 
-        return BuildProjection(monthsAhead, start, req.MonthlyIncomeAverage, req.MonthlyFixedExpenses,
-            req.MonthlyVariableExpensesAverage, installmentSim, req.DebtMonthlyPayments, req.CurrentLiquidPatrimony);
+        (decimal, decimal) SandboxRecurring(DateTime _) =>
+            (req.MonthlyFixedExpenses, req.MonthlyVariableExpensesAverage);
+
+        return BuildProjection(monthsAhead, start, req.MonthlyIncomeAverage, SandboxRecurring,
+            installmentSim, req.DebtMonthlyPayments, req.CurrentLiquidPatrimony);
     }
 
     private static ProjectionResultDto BuildProjection(
         int monthsAhead,
         DateTime startMonth,
         decimal avgIncome,
-        decimal recurringFixed,
-        decimal recurringVariableEstimate,
+        Func<DateTime, (decimal recurringFixed, decimal recurringVariable)> recurringForMonth,
         IReadOnlyDictionary<string, decimal> installmentsByMonth,
         decimal debtMonthly,
         decimal startingPatrimony)
@@ -94,7 +113,8 @@ public class ProjectionService
             var d = startMonth.AddMonths(i);
             var key = $"{d.Year}-{d.Month:00}";
             installmentsByMonth.TryGetValue(key, out var instMonth);
-            var expenseMonth = recurringFixed + recurringVariableEstimate + instMonth + debtMonthly;
+            var (recurringFixed, recurringVariableEstimate) = recurringForMonth(d);
+            var expenseMonth = recurringFixed + recurringVariableEstimate / 2 + instMonth + debtMonthly;
             var incomeMonth = avgIncome;
             balance += incomeMonth - expenseMonth;
             cumInc += incomeMonth;

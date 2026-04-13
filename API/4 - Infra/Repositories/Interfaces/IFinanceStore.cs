@@ -2,7 +2,7 @@ using Project.Entities.Finance;
 
 namespace Repositories.Interfaces;
 
-/// <summary>Persistência de dados financeiros (implementação atual: memória no processo).</summary>
+/// <summary>Persistência de dados financeiros (EF Core / PostgreSQL ou SQLite).</summary>
 public interface IFinanceStore
 {
     Task<IReadOnlyList<Category>> ListCategoriesAsync(string userId, CancellationToken ct = default);
@@ -57,6 +57,11 @@ public interface IFinanceStore
 
     Task HydrateInstallmentPlansAsync(IEnumerable<Installment> installments, CancellationToken ct = default);
     Task HydratePlanGraphAsync(InstallmentPlan plan, string userId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<RecurringExpenseAmountSchedule>> ListRecurringAmountSchedulesAsync(string? userId = null,
+        Guid? recurringExpenseId = null, CancellationToken ct = default);
+    Task UpsertRecurringAmountScheduleAsync(RecurringExpenseAmountSchedule entity, CancellationToken ct = default);
+    Task<bool> DeleteRecurringAmountScheduleAsync(string userId, Guid scheduleId, CancellationToken ct = default);
 
     Task<IReadOnlyList<RecurringExpense>> ListRecurringAsync(string userId, CancellationToken ct = default);
     Task<RecurringExpense?> GetRecurringAsync(string userId, Guid id, CancellationToken ct = default);

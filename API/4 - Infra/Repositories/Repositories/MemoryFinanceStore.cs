@@ -14,6 +14,7 @@ public sealed class FinanceStoreState
     internal readonly Dictionary<Guid, InstallmentPlan> InstallmentPlans = new();
     internal readonly Dictionary<Guid, Installment> Installments = new();
     internal readonly Dictionary<Guid, RecurringExpense> RecurringExpenses = new();
+    internal readonly Dictionary<Guid, RecurringExpenseAmountSchedule> RecurringAmountSchedules = new();
     internal readonly Dictionary<Guid, Debt> Debts = new();
     internal readonly Dictionary<Guid, Account> Accounts = new();
     internal readonly Dictionary<Guid, PatrimonyMonthlySnapshot> PatrimonySnapshots = new();
@@ -42,6 +43,7 @@ public sealed class MemoryFinanceStore(FinanceStoreState s) : IFinanceStore
         StoreLocation = e.StoreLocation,
         CreditCardId = e.CreditCardId,
         InstallmentPlanId = e.InstallmentPlanId,
+        RecurringExpenseId = e.RecurringExpenseId,
         ImagePath = e.ImagePath,
         CreationSource = e.CreationSource,
         CreatedAt = e.CreatedAt,
@@ -59,7 +61,8 @@ public sealed class MemoryFinanceStore(FinanceStoreState s) : IFinanceStore
         ReferenceMonth = i.ReferenceMonth,
         CreatedAt = i.CreatedAt,
         Description = i.Description,
-        BatchId = i.BatchId
+        BatchId = i.BatchId,
+        CreditCardId = i.CreditCardId
     };
 
     private static CreditCard Clone(CreditCard c) => new()
@@ -69,6 +72,10 @@ public sealed class MemoryFinanceStore(FinanceStoreState s) : IFinanceStore
         Name = c.Name,
         ClosingDay = c.ClosingDay,
         DueDay = c.DueDay,
+        IsMealVoucher = c.IsMealVoucher,
+        MealVoucherDailyAmount = c.MealVoucherDailyAmount,
+        MealVoucherCreditDay = c.MealVoucherCreditDay,
+        ThemeColor = c.ThemeColor,
         CreatedAt = c.CreatedAt
     };
 
@@ -118,6 +125,22 @@ public sealed class MemoryFinanceStore(FinanceStoreState s) : IFinanceStore
         Category = null!,
         CreditCard = null
     };
+
+    private static RecurringExpenseAmountSchedule CloneSchedule(RecurringExpenseAmountSchedule x) => new()
+    {
+        Id = x.Id,
+        UserId = x.UserId,
+        RecurringExpenseId = x.RecurringExpenseId,
+        EffectiveFrom = x.EffectiveFrom,
+        Amount = x.Amount,
+        CreatedAt = x.CreatedAt
+    };
+
+    private static DateTime NormalizeMonthStartUtc(DateTime any)
+    {
+        var d = any.Kind == DateTimeKind.Utc ? any : any.ToUniversalTime();
+        return new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    }
 
     private static Debt Clone(Debt d) => new()
     {
@@ -438,6 +461,8 @@ public sealed class MemoryFinanceStore(FinanceStoreState s) : IFinanceStore
                 return Task.FromResult(true);
             if (s.InstallmentPlans.Values.Any(p => p.CreditCardId == cardId))
                 return Task.FromResult(true);
+            if (s.Incomes.Values.Any(i => i.CreditCardId == cardId))
+                return Task.FromResult(true);
             return Task.FromResult(false);
         }
     }
@@ -658,11 +683,58 @@ public sealed class MemoryFinanceStore(FinanceStoreState s) : IFinanceStore
 
     public Task UpdateRecurringAsync(RecurringExpense entity, CancellationToken ct = default) => InsertRecurringAsync(entity, ct);
 
+    public Task<IReadOnlyList<RecurringExpenseAmountSchedule>> ListRecurringAmountSchedulesAsync(string? userId = null,
+        Guid? recurringExpenseId = null, CancellationToken ct = default)
+    {
+        lock (s.Sync)
+        {
+            var q = s.RecurringAmountSchedules.Values.AsEnumerable();
+            if (userId != null)
+                q = q.Where(x => x.UserId == userId);
+            if (recurringExpenseId.HasValue)
+                q = q.Where(x => x.RecurringExpenseId == recurringExpenseId.Value);
+            var list = q.OrderBy(x => x.EffectiveFrom).ThenBy(x => x.CreatedAt).Select(CloneSchedule).ToList();
+            return Task.FromResult<IReadOnlyList<RecurringExpenseAmountSchedule>>(list);
+        }
+    }
+
+    public Task UpsertRecurringAmountScheduleAsync(RecurringExpenseAmountSchedule entity, CancellationToken ct = default)
+    {
+        lock (s.Sync)
+        {
+            var normalizedFrom = NormalizeMonthStartUtc(entity.EffectiveFrom);
+            var dup = s.RecurringAmountSchedules.Values.FirstOrDefault(x =>
+                x.UserId == entity.UserId
+                && x.RecurringExpenseId == entity.RecurringExpenseId
+                && NormalizeMonthStartUtc(x.EffectiveFrom) == normalizedFrom
+                && x.Id != entity.Id);
+            if (dup != null)
+                s.RecurringAmountSchedules.Remove(dup.Id);
+
+            entity.EffectiveFrom = normalizedFrom;
+            s.RecurringAmountSchedules[entity.Id] = CloneSchedule(entity);
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task<bool> DeleteRecurringAmountScheduleAsync(string userId, Guid scheduleId, CancellationToken ct = default)
+    {
+        lock (s.Sync)
+        {
+            if (!s.RecurringAmountSchedules.TryGetValue(scheduleId, out var x) || x.UserId != userId)
+                return Task.FromResult(false);
+            s.RecurringAmountSchedules.Remove(scheduleId);
+            return Task.FromResult(true);
+        }
+    }
+
     public Task DeleteRecurringAsync(string userId, Guid id, CancellationToken ct = default)
     {
         lock (s.Sync)
         {
             s.RecurringExpenses.Remove(id);
+            foreach (var sid in s.RecurringAmountSchedules.Values.Where(x => x.RecurringExpenseId == id && x.UserId == userId).Select(x => x.Id).ToList())
+                s.RecurringAmountSchedules.Remove(sid);
             return Task.CompletedTask;
         }
     }

@@ -12,6 +12,8 @@ public class Expense
     public string? StoreLocation { get; set; }
     public Guid? CreditCardId { get; set; }
     public Guid? InstallmentPlanId { get; set; }
+    /// <summary>Preenchido quando a despesa foi gerada automaticamente a partir de um recorrente.</summary>
+    public Guid? RecurringExpenseId { get; set; }
     public string? ImagePath { get; set; }
     public ExpenseCreationSource CreationSource { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

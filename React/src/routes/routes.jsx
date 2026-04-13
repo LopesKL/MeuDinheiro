@@ -16,12 +16,21 @@ export const defaultRoutes = [
     label: 'Dashboard',
     element: lazy(() => import('@pages/Finance/Dashboard')),
     roles: [],
+    /** Só a raiz é pública; demais rotas usam auth padrão (true) e redirecionam para /signIn se não autenticado. */
+    auth: false,
   },
   {
     key: '/lancamento',
     icon: <ThunderboltOutlined />,
     label: 'Lançamento rápido',
     element: lazy(() => import('@pages/Finance/QuickLaunch')),
+    roles: [],
+  },
+  {
+    key: '/cartoes',
+    icon: <CreditCardOutlined />,
+    label: 'Cartões',
+    element: lazy(() => import('@pages/Finance/CardHub')),
     roles: [],
   },
 

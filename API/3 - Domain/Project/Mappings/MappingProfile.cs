@@ -24,7 +24,9 @@ public class ApplicationMappingProfile : Profile
             .ForMember(d => d.Balance, o => o.MapFrom(s => s.TotalAmount - s.PaidAmount));
         CreateMap<RecurringExpense, RecurringExpenseDto>()
             .ForMember(d => d.Type, o => o.MapFrom(s => (int)s.Type))
-            .ForMember(d => d.PaymentMethod, o => o.MapFrom(s => (int)s.PaymentMethod));
+            .ForMember(d => d.PaymentMethod, o => o.MapFrom(s => (int)s.PaymentMethod))
+            .ForMember(d => d.EffectiveAmount, o => o.Ignore())
+            .ForMember(d => d.AmountSchedules, o => o.Ignore());
         CreateMap<Account, AccountDto>()
             .ForMember(d => d.Type, o => o.MapFrom(s => (int)s.Type));
         CreateMap<Expense, ExpenseDto>()
