@@ -171,20 +171,22 @@ public class RecurringExpenseService
         if (!r.Active)
             return;
 
-        var today = DateTime.UtcNow.Date;
-        var monthKey = new DateTime(today.Year, today.Month, 1);
-        if (r.LastGeneratedMonth == monthKey)
+        var utcNow = DateTime.UtcNow;
+        if (r.LastGeneratedMonth.HasValue
+            && r.LastGeneratedMonth.Value.Year == utcNow.Year
+            && r.LastGeneratedMonth.Value.Month == utcNow.Month)
             return;
 
-        var lastDay = DateTime.DaysInMonth(today.Year, today.Month);
+        var lastDay = DateTime.DaysInMonth(utcNow.Year, utcNow.Month);
         var chargeDay = Math.Min(r.DayOfMonth, lastDay);
-        if (today.Day < chargeDay)
+        if (utcNow.Day < chargeDay)
             return;
 
         var schedules = await _finance.ListRecurringAmountSchedulesAsync(r.UserId, r.Id, ct);
+        var monthKey = new DateTime(utcNow.Year, utcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var amount = RecurringAmountResolver.EffectiveAmount(r, monthKey, schedules);
 
-        var expenseDate = new DateTime(today.Year, today.Month, chargeDay);
+        var expenseDate = new DateTime(utcNow.Year, utcNow.Month, chargeDay, 0, 0, 0, DateTimeKind.Utc);
         var expense = new Expense
         {
             UserId = r.UserId,
@@ -196,42 +198,45 @@ public class RecurringExpenseService
             CreditCardId = r.CreditCardId,
             RecurringExpenseId = r.Id
         };
-        await _finance.InsertExpenseAsync(expense);
+        await _finance.InsertExpenseAsync(expense, ct);
         r.LastGeneratedMonth = monthKey;
-        await _finance.UpdateRecurringAsync(r);
+        await _finance.UpdateRecurringAsync(r, ct);
     }
 
     public async Task<int> GenerateDueForTodayAsync(CancellationToken ct = default)
     {
-        var today = DateTime.UtcNow;
-        var monthKey = new DateTime(today.Year, today.Month, 1);
+        var utcNow = DateTime.UtcNow;
+        var monthKey = new DateTime(utcNow.Year, utcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        var recs = await _finance.ListActiveRecurringForDayOfMonthAsync(today.Day, ct);
+        var recs = await _finance.ListActiveRecurringForDayOfMonthAsync(utcNow.Day, ct);
         var allSchedules = await _finance.ListRecurringAmountSchedulesAsync(userId: null, recurringExpenseId: null, ct);
         var byRec = allSchedules.ToLookup(s => s.RecurringExpenseId);
 
         var count = 0;
         foreach (var r in recs)
         {
-            if (r.LastGeneratedMonth == monthKey)
+            if (r.LastGeneratedMonth.HasValue
+                && r.LastGeneratedMonth.Value.Year == utcNow.Year
+                && r.LastGeneratedMonth.Value.Month == utcNow.Month)
                 continue;
 
             var amount = RecurringAmountResolver.EffectiveAmount(r, monthKey, byRec[r.Id]);
 
+            var expenseDate = new DateTime(utcNow.Year, utcNow.Month, utcNow.Day, 0, 0, 0, DateTimeKind.Utc);
             var expense = new Expense
             {
                 UserId = r.UserId,
                 Amount = amount,
-                Date = today.Date,
+                Date = expenseDate,
                 CategoryId = r.CategoryId,
                 Description = r.Description + " (recorrente)",
                 PaymentMethod = r.PaymentMethod,
                 CreditCardId = r.CreditCardId,
                 RecurringExpenseId = r.Id
             };
-            await _finance.InsertExpenseAsync(expense);
+            await _finance.InsertExpenseAsync(expense, ct);
             r.LastGeneratedMonth = monthKey;
-            await _finance.UpdateRecurringAsync(r);
+            await _finance.UpdateRecurringAsync(r, ct);
             count++;
         }
 

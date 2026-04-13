@@ -12,6 +12,9 @@ using Repositories;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 
+// Npgsql 6+: colunas timestamptz rejeitam DateTime Kind=Unspecified; a flag evita 500 em caminhos legados.
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: false);
 DatabaseUrlConfigurationLoader.Apply(builder);

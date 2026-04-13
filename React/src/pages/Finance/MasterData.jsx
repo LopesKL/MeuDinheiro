@@ -50,6 +50,15 @@ function normalizeFinanceCategory(raw) {
   return { ...raw, id, name, isExpense };
 }
 
+/** API pode enviar camelCase ou PascalCase; Select precisa de id/name estáveis. */
+function normalizeFinanceCreditCard(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = raw.id ?? raw.Id;
+  if (id == null || id === '') return null;
+  const name = String(raw.name ?? raw.Name ?? '').trim() || '—';
+  return { ...raw, id, name };
+}
+
 /**
  * Itens da aba de lançamentos: gasto marcado como Lançamento rápido (creationSource=1)
  * ou legado (creationSource=0) que não é parcela, comprovante nem recorrente gerado pelo sistema.
@@ -340,6 +349,31 @@ const MasterData = () => {
     loadTabData(active);
   }, [active, loadTabData]);
 
+  /** Evita Select de categoria/cartão vazio se o modal abrir antes do loadTabData('rec') concluir. */
+  useEffect(() => {
+    if (!modal.open || modal.type !== 'rec') return undefined;
+    const needCat = !categories?.length;
+    const needCards = !cards?.length;
+    if (!needCat && !needCards) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [c, cc] = await Promise.all([
+          needCat ? financeApi.categories() : Promise.resolve(null),
+          needCards ? financeApi.creditCards() : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        if (c) setCategories(c);
+        if (cc) setCards(cc);
+      } catch (e) {
+        if (!cancelled) message.error(e.message || 'Erro ao carregar categorias ou cartões');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [modal.open, modal.type, categories?.length, cards?.length, message]);
+
   useEffect(() => {
     if (active !== 'mov') return undefined;
     let cancelled = false;
@@ -611,12 +645,6 @@ const MasterData = () => {
     },
   ];
 
-  const incomeCardLabel = (creditCardId) => {
-    if (!creditCardId) return '—';
-    const c = cards.find((x) => x.id === creditCardId);
-    return c?.name ?? '—';
-  };
-
   const recurringScheduleList = (r) => r?.amountSchedules ?? r?.AmountSchedules ?? [];
 
   const recurringEffectiveAmount = (r) => {
@@ -704,6 +732,23 @@ const MasterData = () => {
     /* Se nada veio como despesa (flag errada no JSON ou só receitas), lista todas para não travar o import. */
     return onlyExpense.length > 0 ? onlyExpense : norm;
   }, [categories]);
+
+  const creditCardsNormalized = useMemo(
+    () => (cards || []).map(normalizeFinanceCreditCard).filter(Boolean),
+    [cards]
+  );
+
+  const creditCardSelectOptions = useMemo(
+    () => creditCardsNormalized.map((c) => ({ value: c.id, label: c.name })),
+    [creditCardsNormalized]
+  );
+
+  const incomeCardLabel = useCallback((creditCardId) => {
+    if (!creditCardId) return '—';
+    const fid = String(creditCardId);
+    const c = creditCardsNormalized.find((x) => String(x.id) === fid);
+    return c?.name ?? '—';
+  }, [creditCardsNormalized]);
 
   const planCsvImportExtra = (
     <CsvImportNubankModal
@@ -1423,7 +1468,7 @@ const MasterData = () => {
               showSearch
               optionFilterProp="label"
               placeholder="Nenhum"
-              options={cards.map((c) => ({ value: c.id, label: c.name }))}
+              options={creditCardSelectOptions}
             />
           </Form.Item>
           <Form.Item name="totalAmount" label="Valor total" rules={[{ required: true }]}>
@@ -1626,7 +1671,7 @@ const MasterData = () => {
                   showSearch
                   optionFilterProp="label"
                   placeholder="Nenhum"
-                  options={cards.map((c) => ({ value: c.id, label: c.name }))}
+                  options={creditCardSelectOptions}
                 />
               </Form.Item>
             </>
@@ -1646,23 +1691,13 @@ const MasterData = () => {
                 name="amount"
                 label="Valor base"
                 rules={[{ required: true }]}
-                extra="Padrão quando não há vigência para o mês. Use o botão Vigências na lista para alterar a partir de um mês específico."
               >
                 <InputNumber min={0.01} style={{ width: '100%' }} />
               </Form.Item>
               <Form.Item name="categoryId" label="Categoria" rules={[{ required: true }]}>
                 <Select options={expenseCats.map((c) => ({ value: c.id, label: c.name }))} showSearch optionFilterProp="label" />
               </Form.Item>
-              <Form.Item name="paymentMethod" label="Pagamento" rules={[{ required: true }]}>
-                <Select options={[
-                  { value: 0, label: 'Dinheiro' },
-                  { value: 1, label: 'Débito' },
-                  { value: 2, label: 'Crédito' },
-                  { value: 3, label: 'Pix' },
-                  { value: 4, label: 'Transferência' },
-                  { value: 5, label: 'Outro' },
-                ]} />
-              </Form.Item>
+
               <Form.Item
                 name="creditCardId"
                 label="Cartão de crédito (opcional)"
@@ -1673,7 +1708,7 @@ const MasterData = () => {
                   showSearch
                   optionFilterProp="label"
                   placeholder="Nenhum"
-                  options={cards.map((c) => ({ value: c.id, label: c.name }))}
+                  options={creditCardSelectOptions}
                 />
               </Form.Item>
               <Form.Item name="dayOfMonth" label="Dia do mês" rules={[{ required: true }]}>
